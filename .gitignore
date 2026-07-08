@@ -1,0 +1,7 @@
+._*
+.DS_Store
+*.local.*
+.worktrees/
+*.log
+*.orig
+dist/

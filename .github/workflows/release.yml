@@ -1,0 +1,84 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - v*
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  release:
+    runs-on: macos-26
+    timeout-minutes: 15
+    steps:
+      - name: Tag
+        id: tag
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          tag="$REF_NAME"
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            tag="$INPUT_TAG"
+          fi
+          case "$tag" in
+            v*) ;;
+            *) printf 'invalid tag\n' >&2; exit 1 ;;
+          esac
+          printf 'tag=%s\n' "$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout
+        uses: actions/checkout@v7.0.0
+        with:
+          ref: ${{ steps.tag.outputs.tag }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Node
+        uses: actions/setup-node@v6.4.0
+        with:
+          node-version: 26.4.0
+
+      - name: Syntax
+        run: for f in install.sh src/*.sh scripts/*.sh tests/*.sh; do bash -n "$f"; done
+
+      - name: Test
+        run: |
+          log="$(mktemp)"
+          if bash tests/test.sh > "$log" 2>&1; then
+            printf 'ok\n'
+          else
+            cat "$log"
+            exit 1
+          fi
+
+      - name: Build
+        run: scripts/build-release.sh "${{ steps.tag.outputs.tag }}" dist "$GITHUB_REPOSITORY" >/dev/null
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" dist/* --clobber >/dev/null
+          else
+            gh release create "$RELEASE_TAG" dist/* --verify-tag --title "$RELEASE_TAG" --generate-notes >/dev/null
+          fi

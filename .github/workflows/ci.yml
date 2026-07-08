@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Syntax
+        run: for f in install.sh src/*.sh scripts/*.sh tests/*.sh; do bash -n "$f"; done
+
+      - name: Shellcheck
+        run: shellcheck -e SC1090,SC1091 install.sh src/*.sh scripts/*.sh tests/*.sh
