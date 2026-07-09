@@ -3,5 +3,7 @@
 *.local.*
 .worktrees/
 *.log
+docs/
+plan/
 *.orig
 dist/
