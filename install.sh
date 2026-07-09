@@ -4,8 +4,26 @@ set -o pipefail
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MICROTYPO_DEFAULT_NPM_SPEC="microtypo@0.1.0"
 
+# Minimum Node.js the microtypo CLI needs (microtypo engines: node >=26.4.0).
+# readme.md documents the same floor; keep both in sync.
+MICROTYPO_NODE_MIN_MAJOR=26
+MICROTYPO_NODE_MIN_MINOR=4
+
 install_step() { printf '==> %s\n' "$1" >&2; }
 install_detail() { printf '    %s\n' "$1" >&2; }
+
+# Pick the UI language once, from the user's environment, falling back to English.
+detect_lang() {
+  local l="${MICROTYPO_LANG:-}"
+  [ -n "$l" ] || l="${LC_ALL:-${LC_MESSAGES:-${LANG:-}}}"
+  if [ -z "$l" ] && command -v defaults >/dev/null 2>&1; then
+    l="$(defaults read -g AppleLocale 2>/dev/null || true)"
+  fi
+  case "$l" in
+    ru*) printf 'ru\n' ;;
+    *)   printf 'en\n' ;;
+  esac
+}
 
 service_name() {
   case "$1" in
@@ -60,7 +78,7 @@ parse_install_args() {
   return 0
 }
 
-l10n() {
+l10n_en() {
   local key="$1" arg="$2"
   case "$key" in
     installing_package) printf 'Installing %s\n' "$arg" ;;
@@ -70,7 +88,7 @@ l10n() {
     npm_failed)         printf 'Failed to install package with npm\n' ;;
     cli_missing)        printf 'Package CLI not found: node_modules/microtypo/src/cli/index.js\n' ;;
     cli_path)           printf 'CLI: %s\n' "$arg" ;;
-    check_node)         printf 'Checking Node.js >= 26.4\n' ;;
+    check_node)         printf 'Checking Node.js >= %s\n' "$arg" ;;
     node_path)          printf 'Node: %s\n' "$arg" ;;
     using_override)     printf 'Using MICROTYPO_CLI_OVERRIDE\n' ;;
     check_npm)          printf 'Checking npm\n' ;;
@@ -82,31 +100,87 @@ l10n() {
     complete)           printf 'Done. %s\n' "$arg" ;;
     hotkey)             printf 'Shortcut: assign the same shortcut to Microtypo Text under Text and Microtypo File under Files and Folders.\n' ;;
     registry_ready)     printf 'Services registry refreshed; reopen the Quick Actions menu if it was already open.\n' ;;
+    err_node)           printf 'error: Node.js >= %s not found (set MICROTYPO_NODE_BIN)\n' "$arg" ;;
+    err_npm)            printf 'error: npm not found (set MICROTYPO_NPM_BIN)\n' ;;
+    err_cli_override)   printf 'error: MICROTYPO_CLI_OVERRIDE does not point to a file\n' ;;
+    err_install)        printf 'error: failed to install %s from npm\n' "$arg" ;;
     *)                  return 1 ;;
   esac
 }
 
+l10n_ru() {
+  local key="$1" arg="$2"
+  case "$key" in
+    installing_package) printf 'Устанавливаю %s\n' "$arg" ;;
+    installed_package)  printf 'Установлено: %s\n' "$arg" ;;
+    runtime)            printf 'Среда выполнения: %s\n' "$arg" ;;
+    stage)              printf 'Временный каталог: %s\n' "$arg" ;;
+    npm_failed)         printf 'Не удалось установить пакет через npm\n' ;;
+    cli_missing)        printf 'CLI пакета не найден: node_modules/microtypo/src/cli/index.js\n' ;;
+    cli_path)           printf 'CLI: %s\n' "$arg" ;;
+    check_node)         printf 'Проверяю Node.js >= %s\n' "$arg" ;;
+    node_path)          printf 'Node: %s\n' "$arg" ;;
+    using_override)     printf 'Использую MICROTYPO_CLI_OVERRIDE\n' ;;
+    check_npm)          printf 'Проверяю npm\n' ;;
+    npm_path)           printf 'npm: %s\n' "$arg" ;;
+    write_env)          printf 'Записываю окружение Quick Actions\n' ;;
+    copy_scripts)       printf 'Копирую shell-скрипты\n' ;;
+    copy_workflows)     printf 'Копирую Quick Actions\n' ;;
+    refresh_services)   printf 'Обновляю реестр Services\n' ;;
+    complete)           printf 'Готово. %s\n' "$arg" ;;
+    hotkey)             printf 'Горячая клавиша: назначьте одинаковый шорткат для «Microtypo Text» (раздел Text) и «Microtypo File» (раздел Files and Folders).\n' ;;
+    registry_ready)     printf 'Реестр Services обновлён; переоткройте меню Quick Actions, если оно было открыто.\n' ;;
+    err_node)           printf 'ошибка: Node.js >= %s не найден (задайте MICROTYPO_NODE_BIN)\n' "$arg" ;;
+    err_npm)            printf 'ошибка: npm не найден (задайте MICROTYPO_NPM_BIN)\n' ;;
+    err_cli_override)   printf 'ошибка: MICROTYPO_CLI_OVERRIDE не указывает на файл\n' ;;
+    err_install)        printf 'ошибка: не удалось установить %s через npm\n' "$arg" ;;
+    *)                  return 1 ;;
+  esac
+}
+
+l10n() {
+  case "${MT_LANG:-en}" in
+    ru) l10n_ru "$1" "$2" || l10n_en "$1" "$2" ;;
+    *)  l10n_en "$1" "$2" ;;
+  esac
+}
+
+node_meets_floor() {
+  local ver="$1" major rest minor
+  major="${ver%%.*}"; rest="${ver#*.}"; minor="${rest%%.*}"
+  [ -n "$major" ] && [ -n "$minor" ] || return 1
+  if [ "$major" -gt "$MICROTYPO_NODE_MIN_MAJOR" ] 2>/dev/null; then return 0; fi
+  [ "$major" -eq "$MICROTYPO_NODE_MIN_MAJOR" ] 2>/dev/null && [ "$minor" -ge "$MICROTYPO_NODE_MIN_MINOR" ] 2>/dev/null
+}
+
 resolve_node() {
-  local c ver major rest minor abs
-  for c in "${MICROTYPO_NODE_BIN:-}" /opt/homebrew/bin/node /usr/local/bin/node "$(command -v node 2>/dev/null || true)"; do
+  local c ver abs
+  # Respect the user's environment first: the node on PATH (fnm, nvm, volta, asdf,
+  # mise, Nix, Bun, manual installs) wins over well-known Homebrew locations, which
+  # remain only as a last resort.
+  for c in "${MICROTYPO_NODE_BIN:-}" "$(command -v node 2>/dev/null || true)" /opt/homebrew/bin/node /usr/local/bin/node; do
     if [ -z "$c" ] || [ ! -x "$c" ]; then
       continue
     fi
     ver="$("$c" -p 'process.versions.node' 2>/dev/null)" || continue
-    major="${ver%%.*}"; rest="${ver#*.}"; minor="${rest%%.*}"
-    if [ -z "$major" ] || [ -z "$minor" ]; then
-      continue
+    node_meets_floor "$ver" || continue
+    # Bake the canonical binary so the path survives in the minimal GUI environment
+    # of a Quick Action: process.execPath resolves version-manager shims and session
+    # symlinks (fnm multishells, Volta shims) to the real install.
+    abs="$("$c" -p 'process.execPath' 2>/dev/null)"
+    if [ -z "$abs" ] || [ ! -x "$abs" ]; then
+      abs="$(cd "$(dirname "$c")" && pwd)/$(basename "$c")"
     fi
-    abs="$(cd "$(dirname "$c")" && pwd)/$(basename "$c")"
-    if [ "$major" -gt 26 ] 2>/dev/null; then printf '%s\n' "$abs"; return 0; fi
-    if [ "$major" -eq 26 ] 2>/dev/null && [ "$minor" -ge 4 ] 2>/dev/null; then printf '%s\n' "$abs"; return 0; fi
+    printf '%s\n' "$abs"; return 0
   done
   return 1
 }
 
 resolve_npm() {
-  local c abs
-  for c in "${MICROTYPO_NPM_BIN:-}" /opt/homebrew/bin/npm /usr/local/bin/npm "$(command -v npm 2>/dev/null || true)"; do
+  local node_bin="${1:-}" node_dir="" c abs
+  [ -n "$node_bin" ] && node_dir="$(cd "$(dirname "$node_bin")" 2>/dev/null && pwd)"
+  # Prefer the npm that ships next to the chosen node so the pair always matches.
+  for c in "${MICROTYPO_NPM_BIN:-}" "${node_dir:+$node_dir/npm}" "$(command -v npm 2>/dev/null || true)" /opt/homebrew/bin/npm /usr/local/bin/npm; do
     if [ -z "$c" ] || [ ! -x "$c" ]; then
       continue
     fi
@@ -187,7 +261,9 @@ install_workflow_bundle() {
 }
 
 main() {
-  local node npm_bin cli appsup services env_out runtime text_service file_service selection_input parse_rc microtypo_version
+  local node npm_bin cli appsup services env_out runtime text_service file_service selection_input parse_rc microtypo_version node_floor
+  MT_LANG="$(detect_lang)"
+  node_floor="$MICROTYPO_NODE_MIN_MAJOR.$MICROTYPO_NODE_MIN_MINOR"
   parse_install_args "$@"; parse_rc=$?
   if [ "$parse_rc" -eq 64 ]; then exit 0; fi
   [ "$parse_rc" -eq 0 ] || exit "$parse_rc"
@@ -195,8 +271,8 @@ main() {
   text_service="$(service_name text)" || exit 1
   file_service="$(service_name file)" || exit 1
 
-  install_step "$(l10n check_node)"
-  node="$(resolve_node)" || { echo "error: node >= 26.4 not found (set MICROTYPO_NODE_BIN)"; exit 1; }
+  install_step "$(l10n check_node "$node_floor")"
+  node="$(resolve_node)" || { l10n err_node "$node_floor" >&2; exit 1; }
   install_detail "$(l10n node_path "$node ($("$node" -p 'process.versions.node' 2>/dev/null || printf unknown))")"
 
   appsup="$HOME/Library/Application Support/Microtypo-QuickAction"
@@ -205,15 +281,15 @@ main() {
 
   if [ -n "${MICROTYPO_CLI_OVERRIDE:-}" ]; then
     install_step "$(l10n using_override)"
-    cli="$(resolve_cli)" || { echo "error: MICROTYPO_CLI_OVERRIDE does not point to a file"; exit 1; }
+    cli="$(resolve_cli)" || { l10n err_cli_override >&2; exit 1; }
     install_detail "$(l10n cli_path "$cli")"
   else
     install_step "$(l10n check_npm)"
-    npm_bin="$(resolve_npm)" || { echo "error: npm not found (set MICROTYPO_NPM_BIN)"; exit 1; }
+    npm_bin="$(resolve_npm "$node")" || { l10n err_npm >&2; exit 1; }
     install_detail "$(l10n npm_path "$npm_bin")"
     runtime="$appsup/npm"
     cli="$(install_microtypo_package "$runtime" "$npm_bin")" || {
-      echo "error: failed to install ${MICROTYPO_NPM_SPEC:-$MICROTYPO_DEFAULT_NPM_SPEC} from npm"; exit 1;
+      l10n err_install "${MICROTYPO_NPM_SPEC:-$MICROTYPO_DEFAULT_NPM_SPEC}" >&2; exit 1;
     }
   fi
 
@@ -225,6 +301,7 @@ main() {
   install_step "$(l10n copy_scripts)"
   install -m 0755 "$REPO_DIR/src/typograph-selection.sh" "$appsup/typograph-selection.sh"
   install -m 0755 "$REPO_DIR/src/typograph-file.sh"      "$appsup/typograph-file.sh"
+  [ -f "$REPO_DIR/uninstall.sh" ] && install -m 0755 "$REPO_DIR/uninstall.sh" "$appsup/uninstall.sh"
 
   install_step "$(l10n copy_workflows)"
   rm -rf "$services/$text_service.workflow" "$services/$file_service.workflow"
