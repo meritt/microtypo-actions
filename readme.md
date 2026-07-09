@@ -36,6 +36,22 @@ Selected text uses `--input markdown` by default:
 
 Supported values: `text`, `html`, `markdown`, `json`, `xml`, `yaml`, `toml`, `frontmatter`.
 
+## Verify
+
+Release archives ship a SHA-256 checksum and a build provenance attestation.
+
+Checksum:
+
+```bash
+shasum -a 256 -c microtypo-actions-v0.1.0.tar.gz.sha256
+```
+
+Provenance (requires the GitHub CLI):
+
+```bash
+gh attestation verify microtypo-actions-v0.1.0.tar.gz --repo meritt/microtypo-actions
+```
+
 ## Actions
 
 - `Microtypo Text`: transforms the current text selection and replaces it in place.
@@ -81,10 +97,17 @@ Logs:
 tail -n 20 ~/Library/Logs/microtypo.log
 ```
 
-## Test
+The log rotates to `microtypo.log.1` once it passes 1 MiB (override with `MICROTYPO_LOG_MAX_BYTES`).
+
+## Language
+
+Installer output and notifications follow the system language: Russian when the system is set to Russian, English otherwise. Override with `MICROTYPO_LANG=ru` or `MICROTYPO_LANG=en`.
+
+## Develop
 
 ```bash
-bash tests/test.sh
+make check   # bash -n + shellcheck
+make test    # run tests/test.sh
 ```
 
 ## Release
@@ -101,6 +124,14 @@ scripts/build-release.sh v0.1.0 dist meritt/microtypo-actions
 ```
 
 ## Uninstall
+
+```bash
+"$HOME/Library/Application Support/Microtypo-QuickAction/uninstall.sh"
+```
+
+Pass `--keep-logs` to preserve `~/Library/Logs/microtypo.log`. Backups named `<file>.orig` are left untouched; find them with `find <dir> -name '*.orig'`.
+
+Manual fallback:
 
 ```bash
 rm -rf "$HOME/Library/Services/Microtypo Text.workflow"
