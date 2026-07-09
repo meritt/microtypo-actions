@@ -1,0 +1,2 @@
+# Scripts source env.sh / install.sh at paths only known at runtime.
+disable=SC1090,SC1091
