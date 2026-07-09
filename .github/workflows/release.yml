@@ -13,6 +13,8 @@ on:
 
 permissions:
   contents: write
+  id-token: write
+  attestations: write
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -57,7 +59,7 @@ jobs:
           node-version: 26.4.0
 
       - name: Syntax
-        run: for f in install.sh src/*.sh scripts/*.sh tests/*.sh; do bash -n "$f"; done
+        run: for f in install.sh uninstall.sh src/*.sh scripts/*.sh tests/*.sh; do bash -n "$f"; done
 
       - name: Test
         run: |
@@ -71,6 +73,13 @@ jobs:
 
       - name: Build
         run: scripts/build-release.sh "${{ steps.tag.outputs.tag }}" dist "$GITHUB_REPOSITORY" >/dev/null
+
+      - name: Attest
+        uses: actions/attest-build-provenance@v4.1.1
+        with:
+          subject-path: |
+            dist/microtypo-actions-${{ steps.tag.outputs.tag }}.tar.gz
+            dist/install.sh
 
       - name: Publish
         env:

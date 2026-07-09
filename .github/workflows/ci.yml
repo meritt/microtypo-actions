@@ -26,7 +26,24 @@ jobs:
           persist-credentials: false
 
       - name: Syntax
-        run: for f in install.sh src/*.sh scripts/*.sh tests/*.sh; do bash -n "$f"; done
+        run: for f in install.sh uninstall.sh src/*.sh scripts/*.sh tests/*.sh; do bash -n "$f"; done
 
       - name: Shellcheck
-        run: shellcheck -e SC1090,SC1091 install.sh src/*.sh scripts/*.sh tests/*.sh
+        run: shellcheck install.sh uninstall.sh src/*.sh scripts/*.sh tests/*.sh
+
+  test:
+    runs-on: macos-26
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Node
+        uses: actions/setup-node@v6.4.0
+        with:
+          node-version: 26.4.0
+
+      - name: Test
+        run: bash tests/test.sh
