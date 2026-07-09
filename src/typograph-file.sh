@@ -25,7 +25,29 @@ detect_format() {
 
 LOG="${MICROTYPO_LOG:-$HOME/Library/Logs/microtypo.log}"
 
+# Pick the UI language once, from the user's environment, falling back to English.
+# A Quick Action usually runs without LANG set, so AppleLocale is the real signal.
+detect_lang() {
+  local l="${MICROTYPO_LANG:-}"
+  [ -n "$l" ] || l="${LC_ALL:-${LC_MESSAGES:-${LANG:-}}}"
+  if [ -z "$l" ] && command -v defaults >/dev/null 2>&1; then
+    l="$(defaults read -g AppleLocale 2>/dev/null || true)"
+  fi
+  case "$l" in
+    ru*) printf 'ru\n' ;;
+    *)   printf 'en\n' ;;
+  esac
+}
+
 log() { printf '%s %s\n' "$(date '+%Y-%m-%dT%H:%M:%S')" "$1" >> "$LOG" 2>/dev/null || true; }
+
+rotate_log() {
+  local max="${MICROTYPO_LOG_MAX_BYTES:-1048576}" size
+  [ -f "$LOG" ] || return 0
+  size="$(wc -c < "$LOG" 2>/dev/null | tr -d '[:space:]')" || return 0
+  [ -n "$size" ] && [ "$size" -gt "$max" ] 2>/dev/null && mv -f "$LOG" "$LOG.1" 2>/dev/null
+  return 0
+}
 
 log_path() {
   case "${MICROTYPO_LOG_PATHS:-basename}" in
@@ -37,13 +59,24 @@ log_path() {
 notification_message() {
   local done="$1" skipped="$2" failed="$3"
   local msg="MicroTypo: $done"
-  [ "$skipped" -gt 0 ] && msg="$msg, skipped: $skipped"
-  [ "$failed"  -gt 0 ] && msg="$msg, errors: $failed"
+  case "${MT_LANG:-en}" in
+    ru)
+      [ "$skipped" -gt 0 ] && msg="$msg, пропущено: $skipped"
+      [ "$failed"  -gt 0 ] && msg="$msg, ошибок: $failed"
+      ;;
+    *)
+      [ "$skipped" -gt 0 ] && msg="$msg, skipped: $skipped"
+      [ "$failed"  -gt 0 ] && msg="$msg, errors: $failed"
+      ;;
+  esac
   printf '%s\n' "$msg"
 }
 
 missing_dependency_message() {
-  printf 'node or microtypo not found - run install.sh\n'
+  case "${MT_LANG:-en}" in
+    ru) printf 'node или microtypo не найдены — запустите install.sh\n' ;;
+    *)  printf 'node or microtypo not found - run install.sh\n' ;;
+  esac
 }
 
 notify() {
@@ -67,6 +100,8 @@ process_file() {
 
 main() {
   local target rc done=0 skipped=0 failed=0
+  MT_LANG="$(detect_lang)"
+  rotate_log
   if [ -z "${NODE_BIN:-}" ] || [ ! -x "$NODE_BIN" ] || [ -z "${MICROTYPO_CLI:-}" ] || [ ! -f "$MICROTYPO_CLI" ]; then
     log "abort: node/CLI unavailable (NODE_BIN=$NODE_BIN MICROTYPO_CLI=$MICROTYPO_CLI)"
     osascript -e "display notification \"$(missing_dependency_message)\" with title \"MicroTypo\"" >/dev/null 2>&1 || true
