@@ -76,7 +76,18 @@ CLI="$(MICROTYPO_CLI_OVERRIDE="$TEST_CLI" resolve_cli)"; rc=$?
 if [ "$rc" -eq 0 ] && [ -f "$CLI" ]; then ok "resolve_cli override -> $CLI"; else bad "resolve_cli override rc=$rc"; fi
 
 # shellcheck disable=SC2016
-mk_fakenode() { local p="$1" ver="$2"; printf '#!/bin/bash\n[ "$1" = "-p" ] && echo "%s"\n' "$ver" > "$p"; chmod +x "$p"; }
+mk_fakenode() {
+  local p="$1" ver="$2" resolved
+  resolved="$(cd "$(dirname "$p")" && pwd)/$(basename "$p")"
+  {
+    printf '%s\n' '#!/bin/bash'
+    printf 'case "$2" in\n'
+    printf '  process.versions.node) printf "%%s\\n" "%s" ;;\n' "$ver"
+    printf '  process.execPath) printf "%%s\\n" "%s" ;;\n' "$resolved"
+    printf 'esac\n'
+  } > "$p"
+  chmod +x "$p"
+}
 
 mk_fakenode "$TMP/n263" "26.3.9"
 out="$(MICROTYPO_NODE_BIN="$TMP/n263" resolve_node)"
@@ -86,6 +97,14 @@ mk_fakenode "$TMP/n264" "26.4.0"
 out="$(MICROTYPO_NODE_BIN="$TMP/n264" resolve_node)"
 expected_n264="$(cd "$(dirname "$TMP/n264")" && pwd)/n264"
 eq "resolve_node accepts 26.4.0 override" "$out" "$expected_n264"
+
+# resolve_npm derives npm from the chosen node's directory, not fixed locations
+NPMDIR="$TMP/nodedir"; mkdir -p "$NPMDIR"
+: > "$NPMDIR/node"; chmod +x "$NPMDIR/node"
+: > "$NPMDIR/npm";  chmod +x "$NPMDIR/npm"
+expected_colocated_npm="$(cd "$NPMDIR" && pwd)/npm"
+eq "resolve_npm prefers npm beside node" "$(resolve_npm "$NPMDIR/node")" "$expected_colocated_npm"
+eq "resolve_npm honors MICROTYPO_NPM_BIN override" "$(MICROTYPO_NPM_BIN="$NPMDIR/npm" resolve_npm /nonexistent/node)" "$expected_colocated_npm"
 
 out="$(MICROTYPO_CLI_OVERRIDE="$REPO_DIR/install.sh" resolve_cli)"
 eq "resolve_cli honors override as abs path" "$out" "$REPO_DIR/install.sh"
@@ -204,6 +223,21 @@ eq "noext->text"       "$(detect_format README)"         "text"
 if detect_format image.png >/dev/null; then bad "png must skip"; else ok "png skips (rc1)"; fi
 if detect_format script.js >/dev/null; then bad "js must skip"; else ok "js skips (rc1)"; fi
 eq "notification message" "$(notification_message 1 2 3)" "MicroTypo: 1, skipped: 2, errors: 3"
+# MT_LANG and LOG below are consumed by functions sourced from src/*.sh.
+# shellcheck disable=SC2030,SC2031,SC2034
+eq "notification message ru" "$(MT_LANG=ru; notification_message 1 2 3)" "MicroTypo: 1, пропущено: 2, ошибок: 3"
+# shellcheck disable=SC2030,SC2031,SC2034
+eq "missing dependency ru" "$(MT_LANG=ru; missing_dependency_message)" "node или microtypo не найдены — запустите install.sh"
+
+ROT_LOG="$TMP/rotate.log"
+head -c 2000 /dev/zero | tr '\0' 'a' > "$ROT_LOG"
+# shellcheck disable=SC2030,SC2031,SC2034
+( LOG="$ROT_LOG"; MICROTYPO_LOG_MAX_BYTES=1000 rotate_log )
+if [ -f "$ROT_LOG.1" ] && [ ! -f "$ROT_LOG" ]; then ok "rotate_log rotates oversize log"; else bad "rotate_log did not rotate"; fi
+printf 'small' > "$ROT_LOG"
+# shellcheck disable=SC2030,SC2031,SC2034
+( LOG="$ROT_LOG"; MICROTYPO_LOG_MAX_BYTES=1000 rotate_log )
+if [ -f "$ROT_LOG" ]; then ok "rotate_log keeps small log"; else bad "rotate_log dropped small log"; fi
 
 echo "== file core =="
 WORK="$TMP/work"; rm -rf "$WORK"; mkdir -p "$WORK"
@@ -312,11 +346,38 @@ has_release_path() {
   if printf '%s\n' "$REL_CONTENTS" | grep -Fqx "$1"; then ok "$2"; else bad "$2"; fi
 }
 has_release_path "microtypo-actions-v0.0.0-test/install.sh" "release archive includes installer"
+has_release_path "microtypo-actions-v0.0.0-test/uninstall.sh" "release archive includes uninstaller"
 has_release_path "microtypo-actions-v0.0.0-test/src/typograph-selection.sh" "release archive includes selection script"
 has_release_path "microtypo-actions-v0.0.0-test/src/typograph-file.sh" "release archive includes file script"
 has_release_path "microtypo-actions-v0.0.0-test/services/Microtypo Text.workflow/Contents/Info.plist" "release archive includes text workflow plist"
 has_release_path "microtypo-actions-v0.0.0-test/services/Microtypo File.workflow/Contents/document.wflow" "release archive includes file workflow document"
 if printf '%s\n' "$REL_CONTENTS" | grep -q '/tests/'; then bad "release archive includes tests"; else ok "release archive excludes tests"; fi
 if printf '%s\n' "$REL_CONTENTS" | grep -q '\.DS_Store'; then bad "release archive includes .DS_Store"; else ok "release archive excludes .DS_Store"; fi
+
+echo "== uninstall =="
+U_APPSUP="$TMP/uninstall/appsup"
+U_SERVICES="$TMP/uninstall/services"
+U_LOG="$TMP/uninstall/microtypo.log"
+setup_uninstall() {
+  rm -rf "$TMP/uninstall"
+  mkdir -p "$U_APPSUP" "$U_SERVICES/Microtypo Text.workflow" "$U_SERVICES/Microtypo File.workflow"
+  printf 'x' > "$U_APPSUP/env.sh"
+  printf 'x' > "$U_LOG"
+}
+
+setup_uninstall
+MICROTYPO_APPSUP="$U_APPSUP" MICROTYPO_SERVICES="$U_SERVICES" MICROTYPO_LOG="$U_LOG" MICROTYPO_SKIP_PBS=1 \
+  bash "$REPO_DIR/uninstall.sh" >/dev/null 2>&1
+if [ ! -e "$U_APPSUP" ]; then ok "uninstall removes runtime"; else bad "uninstall left runtime"; fi
+if [ ! -e "$U_SERVICES/Microtypo Text.workflow" ]; then ok "uninstall removes text workflow"; else bad "uninstall left text workflow"; fi
+if [ ! -e "$U_SERVICES/Microtypo File.workflow" ]; then ok "uninstall removes file workflow"; else bad "uninstall left file workflow"; fi
+if [ ! -e "$U_LOG" ]; then ok "uninstall removes log by default"; else bad "uninstall left log"; fi
+if [ -d "$U_SERVICES" ]; then ok "uninstall keeps Services directory"; else bad "uninstall removed Services directory"; fi
+
+setup_uninstall
+MICROTYPO_APPSUP="$U_APPSUP" MICROTYPO_SERVICES="$U_SERVICES" MICROTYPO_LOG="$U_LOG" MICROTYPO_SKIP_PBS=1 \
+  bash "$REPO_DIR/uninstall.sh" --keep-logs >/dev/null 2>&1
+if [ -e "$U_LOG" ]; then ok "uninstall --keep-logs keeps log"; else bad "uninstall --keep-logs removed log"; fi
+if [ ! -e "$U_APPSUP" ]; then ok "uninstall --keep-logs still removes runtime"; else bad "keep-logs left runtime"; fi
 
 echo; echo "PASS=$PASS FAIL=$FAIL"; [ "$FAIL" -eq 0 ]
