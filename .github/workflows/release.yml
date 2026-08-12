@@ -47,7 +47,7 @@ jobs:
           printf 'tag=%s\n' "$tag" >> "$GITHUB_OUTPUT"
 
       - name: Checkout
-        uses: actions/checkout@v7.0.0
+        uses: actions/checkout@v7.0.1
         with:
           ref: ${{ steps.tag.outputs.tag }}
           fetch-depth: 0
@@ -75,7 +75,7 @@ jobs:
         run: scripts/build-release.sh "${{ steps.tag.outputs.tag }}" dist "$GITHUB_REPOSITORY" >/dev/null
 
       - name: Attest
-        uses: actions/attest-build-provenance@v4.1.1
+        uses: actions/attest-build-provenance@v4.2.2
         with:
           subject-path: |
             dist/microtypo-actions-${{ steps.tag.outputs.tag }}.tar.gz
