@@ -2,28 +2,18 @@
 set -o pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-MICROTYPO_DEFAULT_NPM_SPEC="microtypo@0.1.0"
+# shellcheck source=src/common.sh
+. "$REPO_DIR/src/common.sh" || exit 1
 
-# Minimum Node.js the microtypo CLI needs (microtypo engines: node >=26.4.0).
+MICROTYPO_DEFAULT_NPM_SPEC="microtypo@0.2.0"
+
+# Minimum Node.js the microtypo CLI needs (microtypo engines: node >=26.8.0).
 # readme.md documents the same floor; keep both in sync.
 MICROTYPO_NODE_MIN_MAJOR=26
-MICROTYPO_NODE_MIN_MINOR=4
+MICROTYPO_NODE_MIN_MINOR=8
 
 install_step() { printf '==> %s\n' "$1" >&2; }
 install_detail() { printf '    %s\n' "$1" >&2; }
-
-# Pick the UI language once, from the user's environment, falling back to English.
-detect_lang() {
-  local l="${MICROTYPO_LANG:-}"
-  [ -n "$l" ] || l="${LC_ALL:-${LC_MESSAGES:-${LANG:-}}}"
-  if [ -z "$l" ] && command -v defaults >/dev/null 2>&1; then
-    l="$(defaults read -g AppleLocale 2>/dev/null || true)"
-  fi
-  case "$l" in
-    ru*) printf 'ru\n' ;;
-    *)   printf 'en\n' ;;
-  esac
-}
 
 service_name() {
   case "$1" in
@@ -299,6 +289,7 @@ main() {
   write_env_file "$env_out" "$node" "$cli" "$selection_input"
 
   install_step "$(l10n copy_scripts)"
+  install -m 0644 "$REPO_DIR/src/common.sh"              "$appsup/common.sh"
   install -m 0755 "$REPO_DIR/src/typograph-selection.sh" "$appsup/typograph-selection.sh"
   install -m 0755 "$REPO_DIR/src/typograph-file.sh"      "$appsup/typograph-file.sh"
   [ -f "$REPO_DIR/uninstall.sh" ] && install -m 0755 "$REPO_DIR/uninstall.sh" "$appsup/uninstall.sh"

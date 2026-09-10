@@ -71,6 +71,7 @@ copy_release_tree() {
   install -m 0755 "$ROOT/install.sh" "$dst/install.sh" || return 1
   install -m 0755 "$ROOT/uninstall.sh" "$dst/uninstall.sh" || return 1
   install -m 0644 "$ROOT/readme.md" "$dst/readme.md" || return 1
+  install -m 0644 "$ROOT/src/common.sh" "$dst/src/common.sh" || return 1
   install -m 0755 "$ROOT/src/typograph-selection.sh" "$dst/src/typograph-selection.sh" || return 1
   install -m 0755 "$ROOT/src/typograph-file.sh" "$dst/src/typograph-file.sh" || return 1
 
