@@ -137,8 +137,9 @@ Installer output and notifications follow the system language: Russian when the 
 ## Develop
 
 ```bash
-make check   # bash -n + shellcheck
-make test    # run tests/test.sh
+make check        # bash -n + shellcheck
+make test         # run tests/test.sh
+make integration  # install the real package and drive both actions; needs network
 ```
 
 ## Release

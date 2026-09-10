@@ -2,10 +2,8 @@
 set -o pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PASS=0; FAIL=0
-ok()   { PASS=$((PASS+1)); printf '  ok   %s\n' "$1"; }
-bad()  { FAIL=$((FAIL+1)); printf '  FAIL %s\n' "$1"; }
-eq()   { if [ "$2" = "$3" ]; then ok "$1"; else bad "$1 (want [$3] got [$2])"; fi; }
+# shellcheck source=tests/harness.sh
+. "$REPO_DIR/tests/harness.sh" || exit 1
 
 # shellcheck source=/dev/null
 . "$REPO_DIR/install.sh"
@@ -475,4 +473,4 @@ MICROTYPO_APPSUP="$U_APPSUP" MICROTYPO_SERVICES="$U_SERVICES" MICROTYPO_LOG="$U_
 if [ -e "$U_LOG" ]; then ok "uninstall --keep-logs keeps log"; else bad "uninstall --keep-logs removed log"; fi
 if [ ! -e "$U_APPSUP" ]; then ok "uninstall --keep-logs still removes runtime"; else bad "keep-logs left runtime"; fi
 
-echo; echo "PASS=$PASS FAIL=$FAIL"; [ "$FAIL" -eq 0 ]
+summary

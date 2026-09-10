@@ -27,7 +27,7 @@ defaults:
 jobs:
   release:
     runs-on: macos-26
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - name: Tag
         id: tag
@@ -41,22 +41,25 @@ jobs:
             tag="$INPUT_TAG"
           fi
           case "$tag" in
-            v*) ;;
+            v[0-9]*) ;;
             *) printf 'invalid tag\n' >&2; exit 1 ;;
+          esac
+          case "$tag" in
+            *[!A-Za-z0-9._-]*) printf 'invalid tag\n' >&2; exit 1 ;;
           esac
           printf 'tag=%s\n' "$tag" >> "$GITHUB_OUTPUT"
 
       - name: Checkout
-        uses: actions/checkout@v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ steps.tag.outputs.tag }}
           fetch-depth: 0
           persist-credentials: false
 
       - name: Node
-        uses: actions/setup-node@v6.4.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 26.4.0
+          node-version: 26.8.1
 
       - name: Syntax
         run: for f in install.sh uninstall.sh src/*.sh scripts/*.sh tests/*.sh; do bash -n "$f"; done
@@ -71,11 +74,23 @@ jobs:
             exit 1
           fi
 
+      - name: Integration
+        run: |
+          log="$(mktemp)"
+          if bash tests/integration.sh > "$log" 2>&1; then
+            printf 'ok\n'
+          else
+            cat "$log"
+            exit 1
+          fi
+
       - name: Build
-        run: scripts/build-release.sh "${{ steps.tag.outputs.tag }}" dist "$GITHUB_REPOSITORY" >/dev/null
+        env:
+          RELEASE_TAG: ${{ steps.tag.outputs.tag }}
+        run: scripts/build-release.sh "$RELEASE_TAG" dist "$GITHUB_REPOSITORY" >/dev/null
 
       - name: Attest
-        uses: actions/attest-build-provenance@v4.1.1
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: |
             dist/microtypo-actions-${{ steps.tag.outputs.tag }}.tar.gz
