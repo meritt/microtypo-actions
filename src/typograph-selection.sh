@@ -11,7 +11,7 @@ _mt_env="${MICROTYPO_ENV:-$SCRIPT_DIR/env.sh}"; [ -f "$_mt_env" ] && . "$_mt_env
 # Action inherits whatever Automator had, so the selection is typeset under $HOME.
 typeset_selection() {
   cd "${HOME:-/}" 2>/dev/null || cd / || return 1
-  run_with_deadline "${MICROTYPO_TIMEOUT:-60}" \
+  run_with_deadline "$(number "${MICROTYPO_TIMEOUT:-}" 60)" \
     "$NODE_BIN" "$MICROTYPO_CLI" --input "${MICROTYPO_SELECTION_INPUT:-markdown}" \
     --max-input 5000000 --max-ms 30000
 }

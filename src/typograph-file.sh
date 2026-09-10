@@ -9,12 +9,12 @@ _mt_env="${MICROTYPO_ENV:-$SCRIPT_DIR/env.sh}"; [ -f "$_mt_env" ] && . "$_mt_env
 
 LOG="${MICROTYPO_LOG:-$HOME/Library/Logs/microtypo.log}"
 
-MAX_FILES="${MICROTYPO_MAX_FILES:-2000}"
-MAX_SECONDS="${MICROTYPO_MAX_SECONDS:-300}"
-CHUNK_FILES="${MICROTYPO_CHUNK_FILES:-50}"
-CHUNK_BYTES="${MICROTYPO_CHUNK_BYTES:-8388608}"
-TIMEOUT="${MICROTYPO_TIMEOUT:-60}"
-PROGRESS_SECONDS="${MICROTYPO_PROGRESS_SECONDS:-5}"
+MAX_FILES="$(number "${MICROTYPO_MAX_FILES:-}" 2000)"
+MAX_SECONDS="$(number "${MICROTYPO_MAX_SECONDS:-}" 300)"
+CHUNK_FILES="$(number "${MICROTYPO_CHUNK_FILES:-}" 50)"
+CHUNK_BYTES="$(number "${MICROTYPO_CHUNK_BYTES:-}" 8388608)"
+TIMEOUT="$(number "${MICROTYPO_TIMEOUT:-}" 60)"
+PROGRESS_SECONDS="$(number "${MICROTYPO_PROGRESS_SECONDS:-}" 5)"
 
 MAX_INPUT=5000000
 MAX_MS=30000
@@ -69,18 +69,22 @@ build_find_names() {
 log() { printf '%s %s\n' "$(date '+%Y-%m-%dT%H:%M:%S')" "$1" >> "$LOG" 2>/dev/null || true; }
 
 rotate_log() {
-  local max="${MICROTYPO_LOG_MAX_BYTES:-1048576}" size
+  local max size
+  max="$(number "${MICROTYPO_LOG_MAX_BYTES:-}" 1048576)"
   [ -f "$LOG" ] || return 0
   size="$(wc -c < "$LOG" 2>/dev/null | tr -d '[:space:]')" || return 0
   [ -n "$size" ] && [ "$size" -gt "$max" ] 2>/dev/null && mv -f "$LOG" "$LOG.1" 2>/dev/null
   return 0
 }
 
+# A newline in a name would forge log lines, so it never reaches the log.
 log_path() {
+  local p="$1"
   case "${MICROTYPO_LOG_PATHS:-basename}" in
-    full) printf '%s\n' "$1" ;;
-    *)    printf '%s\n' "${1##*/}" ;;
+    full) ;;
+    *)    p="${p##*/}" ;;
   esac
+  printf '%s\n' "${p//[$'\n\r']/ }"
 }
 
 notification_message() {
@@ -116,7 +120,9 @@ missing_dependency_message() {
 }
 
 notify_text() {
-  osascript -e "display notification \"$1\" with title \"MicroTypo\"" >/dev/null 2>&1 || true
+  osascript -e 'on run argv' \
+    -e 'display notification (item 1 of argv) with title "MicroTypo"' \
+    -e 'end run' -- "$1" >/dev/null 2>&1 || true
 }
 
 notify() {
@@ -207,7 +213,7 @@ chunk_run() {
 chunk_add() {
   local f="$1" fmt="$2" root="$3" size
   size="$(wc -c < "$f" 2>/dev/null)" || size=0
-  size="${size// /}"
+  size="$(number "${size//[!0-9]/}" 0)"
 
   if [ "${#chunk[@]}" -gt 0 ] && { [ "$fmt" != "$chunk_fmt" ] || [ "$root" != "$chunk_root" ] \
       || [ "${#chunk[@]}" -ge "$CHUNK_FILES" ] || [ $((chunk_bytes + size)) -gt "$CHUNK_BYTES" ]; }; then
@@ -228,13 +234,15 @@ chunk_add() {
 }
 
 main() {
-  local target fmt dir i
+  local target fmt dir i missing
   MT_LANG="$(detect_lang)"
   started=$SECONDS
   progressed=$SECONDS
   rotate_log
   if [ -z "${NODE_BIN:-}" ] || [ ! -x "$NODE_BIN" ] || [ -z "${MICROTYPO_CLI:-}" ] || [ ! -f "$MICROTYPO_CLI" ]; then
-    log "abort: node/CLI unavailable (NODE_BIN=$NODE_BIN MICROTYPO_CLI=$MICROTYPO_CLI)"
+    missing=node
+    [ -n "${NODE_BIN:-}" ] && [ -x "$NODE_BIN" ] && missing=cli
+    log "abort: $missing unavailable"
     notify_text "$(missing_dependency_message)"
     return 1
   fi

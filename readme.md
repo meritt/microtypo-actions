@@ -19,7 +19,7 @@ curl -fsSL https://github.com/meritt/microtypo-actions/releases/latest/download/
 Pinned version:
 
 ```bash
-curl -fsSL https://github.com/meritt/microtypo-actions/releases/download/v0.1.0/install.sh | bash
+curl -fsSL https://github.com/meritt/microtypo-actions/releases/download/v0.2.0/install.sh | bash
 ```
 
 Local source:
@@ -43,13 +43,13 @@ Release archives ship a SHA-256 checksum and a build provenance attestation.
 Checksum:
 
 ```bash
-shasum -a 256 -c microtypo-actions-v0.1.0.tar.gz.sha256
+shasum -a 256 -c microtypo-actions-v0.2.0.tar.gz.sha256
 ```
 
 Provenance (requires the GitHub CLI):
 
 ```bash
-gh attestation verify microtypo-actions-v0.1.0.tar.gz --repo meritt/microtypo-actions
+gh attestation verify microtypo-actions-v0.2.0.tar.gz --repo meritt/microtypo-actions
 ```
 
 ## Actions
@@ -144,15 +144,19 @@ make integration  # install the real package and drive both actions; needs netwo
 
 ## Release
 
+`VERSION` in the repository root carries the single version of the project. A release bumps it
+first; the tag must match it, and the build refuses a tag that disagrees.
+
 ```bash
-git tag -a v0.1.0 -m "v0.1.0"
-git push origin v0.1.0
+printf '0.2.0\n' > VERSION
+git tag -a v0.2.0 -m "v0.2.0"
+git push origin v0.2.0
 ```
 
 Local artifact build:
 
 ```bash
-scripts/build-release.sh v0.1.0 dist meritt/microtypo-actions
+scripts/build-release.sh v0.2.0 dist meritt/microtypo-actions
 ```
 
 ## Uninstall

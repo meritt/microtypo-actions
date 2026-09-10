@@ -7,8 +7,10 @@ usage() {
   cat <<'EOF'
 Usage: scripts/build-release.sh <version-tag> [out-dir] [github-repo]
 
+The tag must match the VERSION file, prefixed with "v".
+
 Example:
-  scripts/build-release.sh v0.1.0 dist meritt/microtypo-actions
+  scripts/build-release.sh v0.2.0 dist meritt/microtypo-actions
 EOF
 }
 
@@ -43,12 +45,23 @@ infer_github_repo() {
 }
 
 validate_tag() {
+  local declared
   case "$1" in
     ""|*[!A-Za-z0-9._-]*)
       printf 'error: version tag must contain only letters, digits, dot, underscore, or dash\n' >&2
       return 1
       ;;
   esac
+
+  declared="$(cat "$ROOT/VERSION" 2>/dev/null)" || declared=""
+  if [ -z "$declared" ]; then
+    printf 'error: VERSION file is missing or empty\n' >&2
+    return 1
+  fi
+  if [ "$1" != "v$declared" ]; then
+    printf 'error: tag %s does not match VERSION %s\n' "$1" "$declared" >&2
+    return 1
+  fi
 }
 
 validate_repo() {
@@ -70,6 +83,7 @@ copy_release_tree() {
 
   install -m 0755 "$ROOT/install.sh" "$dst/install.sh" || return 1
   install -m 0755 "$ROOT/uninstall.sh" "$dst/uninstall.sh" || return 1
+  install -m 0644 "$ROOT/VERSION" "$dst/VERSION" || return 1
   install -m 0644 "$ROOT/readme.md" "$dst/readme.md" || return 1
   install -m 0644 "$ROOT/src/common.sh" "$dst/src/common.sh" || return 1
   install -m 0755 "$ROOT/src/typograph-selection.sh" "$dst/src/typograph-selection.sh" || return 1
@@ -209,7 +223,6 @@ main() {
   trap 'rm -rf "$stage"' EXIT INT TERM
 
   copy_release_tree "$stage/$bundle" || exit 1
-  printf '%s\n' "$version" > "$stage/$bundle/VERSION" || exit 1
 
   (cd "$stage" && tar -czf "$out_dir/$archive" "$bundle") || exit 1
   write_sha256 "$out_dir/$archive" "$out_dir/$archive.sha256" || exit 1

@@ -19,7 +19,7 @@ const fs = require('fs');
 
 const args = process.argv.slice(2);
 if (args.includes('--version')) {
-  process.stdout.write('0.1.0\n');
+  process.stdout.write('0.2.0\n');
   process.exit(0);
 }
 
@@ -71,8 +71,8 @@ eq "parse_install_args selection input equals flag" "$INSTALL_SELECTION_INPUT" "
 MICROTYPO_SELECTION_INPUT=yaml parse_install_args >/dev/null 2>&1
 eq "parse_install_args selection input env" "$INSTALL_SELECTION_INPUT" "yaml"
 if parse_install_args --selection-input badformat >/dev/null 2>&1; then bad "parse_install_args accepted bad input"; else ok "parse_install_args rejects bad input"; fi
-CLI="$(MICROTYPO_CLI_OVERRIDE="$TEST_CLI" resolve_cli)"; rc=$?
-if [ "$rc" -eq 0 ] && [ -f "$CLI" ]; then ok "resolve_cli override -> $CLI"; else bad "resolve_cli override rc=$rc"; fi
+CLI="$(MICROTYPO_CLI_OVERRIDE="$TEST_CLI" resolve_cli_override)"; rc=$?
+if [ "$rc" -eq 0 ] && [ -f "$CLI" ]; then ok "resolve_cli_override -> $CLI"; else bad "resolve_cli_override rc=$rc"; fi
 
 # shellcheck disable=SC2016
 mk_fakenode() {
@@ -110,8 +110,8 @@ expected_colocated_npm="$(cd "$NPMDIR" && pwd)/npm"
 eq "resolve_npm prefers npm beside node" "$(resolve_npm "$NPMDIR/node")" "$expected_colocated_npm"
 eq "resolve_npm honors MICROTYPO_NPM_BIN override" "$(MICROTYPO_NPM_BIN="$NPMDIR/npm" resolve_npm /nonexistent/node)" "$expected_colocated_npm"
 
-out="$(MICROTYPO_CLI_OVERRIDE="$REPO_DIR/install.sh" resolve_cli)"
-eq "resolve_cli honors override as abs path" "$out" "$REPO_DIR/install.sh"
+out="$(MICROTYPO_CLI_OVERRIDE="$REPO_DIR/install.sh" resolve_cli_override)"
+eq "resolve_cli_override returns an absolute path" "$out" "$REPO_DIR/install.sh"
 
 # shellcheck disable=SC2016
 mk_fakenpm() {
@@ -154,6 +154,18 @@ INSTALL_LOG_EN="$TMP/install-en.log"
 out_en="$(install_microtypo_package "$PRIVATE_PREFIX_EN" "$FAKE_NPM" 2>"$INSTALL_LOG_EN")"
 eq "install_microtypo_package returns second private cli" "$out_en" "$PRIVATE_PREFIX_EN/node_modules/microtypo/src/cli/index.js"
 if grep -q "Installing microtypo@0.2.0" "$INSTALL_LOG_EN"; then ok "install shows repeated package status"; else bad "repeated install status missing"; fi
+
+ROLLBACK_PREFIX="$TMP/rollback-npm"; mkdir -p "$ROLLBACK_PREFIX"
+printf 'old runtime' > "$ROLLBACK_PREFIX/marker"
+FAILING_NPM="$TMP/npm-fail"
+printf '%s\n' '#!/bin/bash' 'exit 1' > "$FAILING_NPM"; chmod +x "$FAILING_NPM"
+if install_microtypo_package "$ROLLBACK_PREFIX" "$FAILING_NPM" >/dev/null 2>&1; then
+  bad "install reports success when npm fails"
+else
+  ok "install fails when npm fails"
+fi
+eq "failed install keeps the previous runtime" "$(cat "$ROLLBACK_PREFIX/marker" 2>/dev/null)" "old runtime"
+if ls -d "$TMP"/microtypo-stage.* >/dev/null 2>&1; then bad "install leaves a staging directory"; else ok "install cleans its staging directory"; fi
 
 WF_STAGE="$TMP/workflows"; rm -rf "$WF_STAGE"; mkdir -p "$WF_STAGE"
 install_workflow_bundle "$REPO_DIR/services/Microtypo Text.workflow" "$WF_STAGE/Microtypo Text.workflow" "Microtypo Text"
@@ -229,6 +241,10 @@ if detect_format script.js >/dev/null; then bad "js must skip"; else ok "js skip
 eq "notification message" "$(notification_message 1 2 3)" "MicroTypo: 1, skipped: 2, errors: 3"
 eq "notification message reports a ceiling" "$(notification_message 1 0 0 files)" "MicroTypo: 1, stopped at limit"
 eq "progress message" "$(progress_message 5 20)" "MicroTypo: 5 of 20"
+eq "number keeps a plain number" "$(number 42 7)" "42"
+eq "number falls back on a non-number" "$(number abc 7)" "7"
+eq "number falls back on an empty value" "$(number '' 7)" "7"
+eq "log_path strips a newline from a name" "$(log_path "$(printf 'a\nb.txt')")" "a b.txt"
 # shellcheck disable=SC2030,SC2031,SC2034
 eq "progress message ru" "$(MT_LANG=ru; progress_message 5 20)" "MicroTypo: 5 из 20"
 # MT_LANG and LOG below are consumed by functions sourced from src/*.sh.
@@ -359,6 +375,9 @@ run_batch MICROTYPO_MAX_SECONDS=0
 if grep -q "stop: time limit 0s" "$MICROTYPO_LOG"; then ok "time ceiling stops the run"; else bad "time ceiling not logged"; fi
 eq "time ceiling starts no CLI" "$(runs)" "0"
 
+run_batch MICROTYPO_MAX_SECONDS=abc
+eq "a malformed ceiling falls back instead of stopping the run" "$(runs)" "2"
+
 SLOW="$TMP/slow"; rm -rf "$SLOW"; mkdir -p "$SLOW"; printf 'slow\n' > "$SLOW/s.md"
 : > "$MICROTYPO_LOG"; : > "$REC"
 env FAKE_RECORD="$REC" FAKE_SLEEP=9 MICROTYPO_TIMEOUT=1 MICROTYPO_ENV="$TMP/env-rec.sh" \
@@ -403,23 +422,31 @@ else
 fi
 
 echo "== release artifacts =="
+REL_VERSION="$(cat "$REPO_DIR/VERSION")"
+REL_TAG="v$REL_VERSION"
+REL_BUNDLE="microtypo-actions-$REL_TAG"
 REL_DIST="$TMP/release-dist"
 REL_LOG="$TMP/release-build.log"
-if "$REPO_DIR/scripts/build-release.sh" v0.0.0-test "$REL_DIST" meritt/microtypo-actions >"$REL_LOG" 2>&1; then
+if "$REPO_DIR/scripts/build-release.sh" "$REL_TAG" "$REL_DIST" meritt/microtypo-actions >"$REL_LOG" 2>&1; then
   ok "build-release creates artifacts"
 else
   bad "build-release failed ($(cat "$REL_LOG"))"
 fi
+if "$REPO_DIR/scripts/build-release.sh" v0.0.0-mismatch "$TMP/release-mismatch" meritt/microtypo-actions >/dev/null 2>&1; then
+  bad "build-release accepts a tag that disagrees with VERSION"
+else
+  ok "build-release refuses a tag that disagrees with VERSION"
+fi
 REL_RELATIVE="$TMP/release-relative"
 mkdir -p "$REL_RELATIVE"
-if (cd "$REL_RELATIVE" && "$REPO_DIR/scripts/build-release.sh" v0.0.0-rel dist meritt/microtypo-actions >/dev/null 2>&1) \
-  && [ -f "$REL_RELATIVE/dist/microtypo-actions-v0.0.0-rel.tar.gz" ]; then
+if (cd "$REL_RELATIVE" && "$REPO_DIR/scripts/build-release.sh" "$REL_TAG" dist meritt/microtypo-actions >/dev/null 2>&1) \
+  && [ -f "$REL_RELATIVE/dist/$REL_BUNDLE.tar.gz" ]; then
   ok "build-release supports relative out dir"
 else
   bad "build-release relative out dir failed"
 fi
 
-REL_ARCHIVE="$REL_DIST/microtypo-actions-v0.0.0-test.tar.gz"
+REL_ARCHIVE="$REL_DIST/$REL_BUNDLE.tar.gz"
 if [ -f "$REL_ARCHIVE" ]; then ok "release archive exists"; else bad "release archive missing"; fi
 if [ -f "$REL_ARCHIVE.sha256" ]; then ok "release archive checksum exists"; else bad "release archive checksum missing"; fi
 if [ -x "$REL_DIST/install.sh" ]; then ok "release bootstrap installer exists"; else bad "release bootstrap installer missing"; fi
@@ -428,7 +455,7 @@ if grep -q "DEFAULT_REPO='meritt/microtypo-actions'" "$REL_DIST/install.sh"; the
 else
   bad "release bootstrap repository missing"
 fi
-if (cd "$REL_DIST" && shasum -a 256 -c "microtypo-actions-v0.0.0-test.tar.gz.sha256" >/dev/null 2>&1); then
+if (cd "$REL_DIST" && shasum -a 256 -c "$REL_BUNDLE.tar.gz.sha256" >/dev/null 2>&1); then
   ok "release checksum verifies"
 else
   bad "release checksum does not verify"
@@ -438,12 +465,14 @@ REL_CONTENTS="$(tar -tzf "$REL_ARCHIVE" 2>/dev/null)"
 has_release_path() {
   if printf '%s\n' "$REL_CONTENTS" | grep -Fqx "$1"; then ok "$2"; else bad "$2"; fi
 }
-has_release_path "microtypo-actions-v0.0.0-test/install.sh" "release archive includes installer"
-has_release_path "microtypo-actions-v0.0.0-test/uninstall.sh" "release archive includes uninstaller"
-has_release_path "microtypo-actions-v0.0.0-test/src/typograph-selection.sh" "release archive includes selection script"
-has_release_path "microtypo-actions-v0.0.0-test/src/typograph-file.sh" "release archive includes file script"
-has_release_path "microtypo-actions-v0.0.0-test/services/Microtypo Text.workflow/Contents/Info.plist" "release archive includes text workflow plist"
-has_release_path "microtypo-actions-v0.0.0-test/services/Microtypo File.workflow/Contents/document.wflow" "release archive includes file workflow document"
+has_release_path "$REL_BUNDLE/install.sh" "release archive includes installer"
+has_release_path "$REL_BUNDLE/uninstall.sh" "release archive includes uninstaller"
+has_release_path "$REL_BUNDLE/VERSION" "release archive includes VERSION"
+has_release_path "$REL_BUNDLE/src/common.sh" "release archive includes shared helpers"
+has_release_path "$REL_BUNDLE/src/typograph-selection.sh" "release archive includes selection script"
+has_release_path "$REL_BUNDLE/src/typograph-file.sh" "release archive includes file script"
+has_release_path "$REL_BUNDLE/services/Microtypo Text.workflow/Contents/Info.plist" "release archive includes text workflow plist"
+has_release_path "$REL_BUNDLE/services/Microtypo File.workflow/Contents/document.wflow" "release archive includes file workflow document"
 if printf '%s\n' "$REL_CONTENTS" | grep -q '/tests/'; then bad "release archive includes tests"; else ok "release archive excludes tests"; fi
 if printf '%s\n' "$REL_CONTENTS" | grep -q '\.DS_Store'; then bad "release archive includes .DS_Store"; else ok "release archive excludes .DS_Store"; fi
 

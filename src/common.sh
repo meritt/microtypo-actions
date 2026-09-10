@@ -18,6 +18,15 @@ detect_lang() {
   esac
 }
 
+# A ceiling that is not a plain number is no ceiling at all, so anything else falls
+# back to the default rather than disabling the check it guards.
+number() {
+  case "$1" in
+    ''|*[!0-9]*) printf '%s\n' "$2" ;;
+    *)           printf '%s\n' "$1" ;;
+  esac
+}
+
 # Run a command under a wall-clock deadline; a killed command returns
 # MICROTYPO_TIMEOUT_STATUS. Stdin is passed explicitly because bash redirects an
 # asynchronous command from /dev/null without one. The watchdog leaves on its own
