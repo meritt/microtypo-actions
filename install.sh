@@ -2,28 +2,18 @@
 set -o pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-MICROTYPO_DEFAULT_NPM_SPEC="microtypo@0.1.0"
+# shellcheck source=src/common.sh
+. "$REPO_DIR/src/common.sh" || exit 1
 
-# Minimum Node.js the microtypo CLI needs (microtypo engines: node >=26.4.0).
+MICROTYPO_DEFAULT_NPM_SPEC="microtypo@0.2.0"
+
+# Minimum Node.js the microtypo CLI needs (microtypo engines: node >=26.8.0).
 # readme.md documents the same floor; keep both in sync.
 MICROTYPO_NODE_MIN_MAJOR=26
-MICROTYPO_NODE_MIN_MINOR=4
+MICROTYPO_NODE_MIN_MINOR=8
 
 install_step() { printf '==> %s\n' "$1" >&2; }
 install_detail() { printf '    %s\n' "$1" >&2; }
-
-# Pick the UI language once, from the user's environment, falling back to English.
-detect_lang() {
-  local l="${MICROTYPO_LANG:-}"
-  [ -n "$l" ] || l="${LC_ALL:-${LC_MESSAGES:-${LANG:-}}}"
-  if [ -z "$l" ] && command -v defaults >/dev/null 2>&1; then
-    l="$(defaults read -g AppleLocale 2>/dev/null || true)"
-  fi
-  case "$l" in
-    ru*) printf 'ru\n' ;;
-    *)   printf 'en\n' ;;
-  esac
-}
 
 service_name() {
   case "$1" in
@@ -190,39 +180,23 @@ resolve_npm() {
   return 1
 }
 
-resolve_cli() {
-  local candidate global_root
-  if [ -n "${MICROTYPO_CLI_OVERRIDE:-}" ] && [ -f "$MICROTYPO_CLI_OVERRIDE" ]; then
-    printf '%s\n' "$(cd "$(dirname "$MICROTYPO_CLI_OVERRIDE")" && pwd)/$(basename "$MICROTYPO_CLI_OVERRIDE")"; return 0
-  fi
-
-  for global_root in "${MICROTYPO_NPM_ROOT:-}" "$(npm root -g 2>/dev/null || true)"; do
-    [ -n "$global_root" ] || continue
-    candidate="$global_root/microtypo/src/cli/index.js"
-    if [ -f "$candidate" ]; then
-      printf '%s\n' "$(cd "$(dirname "$candidate")" && pwd)/$(basename "$candidate")"; return 0
-    fi
-  done
-
-  candidate="$(command -v microtypo 2>/dev/null || true)"
-  if [ -n "$candidate" ] && [ -f "$candidate" ]; then
-    printf '%s\n' "$(cd "$(dirname "$candidate")" && pwd)/$(basename "$candidate")"; return 0
-  fi
-  return 1
+resolve_cli_override() {
+  local p="${MICROTYPO_CLI_OVERRIDE:-}"
+  [ -n "$p" ] && [ -f "$p" ] || return 1
+  printf '%s\n' "$(cd "$(dirname "$p")" && pwd)/$(basename "$p")"
 }
 
 install_microtypo_package() {
-  local prefix="$1" npm_bin="$2" spec stage cli
+  local prefix="$1" npm_bin="$2" spec stage previous cli
   [ -n "$prefix" ] && [ -n "$npm_bin" ] && [ -x "$npm_bin" ] || return 1
   spec="${MICROTYPO_NPM_SPEC:-$MICROTYPO_DEFAULT_NPM_SPEC}"
-  stage="$prefix.stage.$$"
+  stage="$(mktemp -d "$(dirname "$prefix")/microtypo-stage.XXXXXX")" || return 1
+  previous="$stage.previous"
 
   install_step "$(l10n installing_package "$spec")"
   install_detail "$(l10n runtime "$prefix")"
   install_detail "$(l10n stage "$stage")"
 
-  rm -rf "$stage" || return 1
-  mkdir -p "$stage" || return 1
   if ! "$npm_bin" install --prefix "$stage" --omit=dev --ignore-scripts --no-audit --no-fund --progress=true "$spec" 1>&2; then
     install_detail "$(l10n npm_failed)"
     rm -rf "$stage"; return 1
@@ -232,8 +206,18 @@ install_microtypo_package() {
     install_detail "$(l10n cli_missing)"
     rm -rf "$stage"; return 1
   fi
-  rm -rf "$prefix" || { rm -rf "$stage"; return 1; }
-  mv "$stage" "$prefix" || { rm -rf "$stage"; return 1; }
+
+  # The previous runtime is kept until the new one is in place, so a failed swap
+  # leaves a working installation rather than none.
+  if [ -e "$prefix" ] && ! mv "$prefix" "$previous"; then
+    rm -rf "$stage"; return 1
+  fi
+  if ! mv "$stage" "$prefix"; then
+    [ -e "$previous" ] && mv "$previous" "$prefix"
+    rm -rf "$stage"; return 1
+  fi
+  rm -rf "$previous"
+
   install_step "$(l10n installed_package "$spec")"
   install_detail "$(l10n cli_path "$prefix/node_modules/microtypo/src/cli/index.js")"
   printf '%s\n' "$prefix/node_modules/microtypo/src/cli/index.js"
@@ -281,7 +265,7 @@ main() {
 
   if [ -n "${MICROTYPO_CLI_OVERRIDE:-}" ]; then
     install_step "$(l10n using_override)"
-    cli="$(resolve_cli)" || { l10n err_cli_override >&2; exit 1; }
+    cli="$(resolve_cli_override)" || { l10n err_cli_override >&2; exit 1; }
     install_detail "$(l10n cli_path "$cli")"
   else
     install_step "$(l10n check_npm)"
@@ -299,9 +283,10 @@ main() {
   write_env_file "$env_out" "$node" "$cli" "$selection_input"
 
   install_step "$(l10n copy_scripts)"
-  install -m 0755 "$REPO_DIR/src/typograph-selection.sh" "$appsup/typograph-selection.sh"
-  install -m 0755 "$REPO_DIR/src/typograph-file.sh"      "$appsup/typograph-file.sh"
-  [ -f "$REPO_DIR/uninstall.sh" ] && install -m 0755 "$REPO_DIR/uninstall.sh" "$appsup/uninstall.sh"
+  install -m 0644 "$REPO_DIR/src/common.sh"              "$appsup/common.sh"              || exit 1
+  install -m 0755 "$REPO_DIR/src/typograph-selection.sh" "$appsup/typograph-selection.sh" || exit 1
+  install -m 0755 "$REPO_DIR/src/typograph-file.sh"      "$appsup/typograph-file.sh"      || exit 1
+  install -m 0755 "$REPO_DIR/uninstall.sh"               "$appsup/uninstall.sh"           || exit 1
 
   install_step "$(l10n copy_workflows)"
   rm -rf "$services/$text_service.workflow" "$services/$file_service.workflow"

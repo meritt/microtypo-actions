@@ -1,6 +1,13 @@
 #!/bin/bash
 set -o pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Runs both from the repository and from the installed runtime, where common.sh sits beside it.
+_mt_common="$SCRIPT_DIR/common.sh"
+[ -f "$_mt_common" ] || _mt_common="$SCRIPT_DIR/src/common.sh"
+# shellcheck source=src/common.sh
+. "$_mt_common" || exit 1
+
 APPSUP="${MICROTYPO_APPSUP:-$HOME/Library/Application Support/Microtypo-QuickAction}"
 SERVICES="${MICROTYPO_SERVICES:-$HOME/Library/Services}"
 LOG="${MICROTYPO_LOG:-$HOME/Library/Logs/microtypo.log}"
@@ -9,19 +16,6 @@ FILE_SERVICE="Microtypo File"
 
 uninstall_step() { printf '==> %s\n' "$1" >&2; }
 uninstall_detail() { printf '    %s\n' "$1" >&2; }
-
-# Pick the UI language once, from the user's environment, falling back to English.
-detect_lang() {
-  local l="${MICROTYPO_LANG:-}"
-  [ -n "$l" ] || l="${LC_ALL:-${LC_MESSAGES:-${LANG:-}}}"
-  if [ -z "$l" ] && command -v defaults >/dev/null 2>&1; then
-    l="$(defaults read -g AppleLocale 2>/dev/null || true)"
-  fi
-  case "$l" in
-    ru*) printf 'ru\n' ;;
-    *)   printf 'en\n' ;;
-  esac
-}
 
 l10n() {
   local key="$1" arg="$2"

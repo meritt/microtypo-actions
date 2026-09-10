@@ -2,10 +2,8 @@
 set -o pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PASS=0; FAIL=0
-ok()   { PASS=$((PASS+1)); printf '  ok   %s\n' "$1"; }
-bad()  { FAIL=$((FAIL+1)); printf '  FAIL %s\n' "$1"; }
-eq()   { if [ "$2" = "$3" ]; then ok "$1"; else bad "$1 (want [$3] got [$2])"; fi; }
+# shellcheck source=tests/harness.sh
+. "$REPO_DIR/tests/harness.sh" || exit 1
 
 # shellcheck source=/dev/null
 . "$REPO_DIR/install.sh"
@@ -13,6 +11,7 @@ eq()   { if [ "$2" = "$3" ]; then ok "$1"; else bad "$1 (want [$3] got [$2])"; f
 TMP="${TMPDIR:-/tmp}/microtypo-actions-test.$$"
 trap 'rm -rf "$TMP"' EXIT
 mkdir -p "$TMP"
+TMP="$(cd "$TMP" && pwd)"
 
 TEST_CLI="$TMP/microtypo-cli.js"
 cat > "$TEST_CLI" <<'EOF'
@@ -20,7 +19,7 @@ const fs = require('fs');
 
 const args = process.argv.slice(2);
 if (args.includes('--version')) {
-  process.stdout.write('0.1.0\n');
+  process.stdout.write('0.2.0\n');
   process.exit(0);
 }
 
@@ -72,8 +71,8 @@ eq "parse_install_args selection input equals flag" "$INSTALL_SELECTION_INPUT" "
 MICROTYPO_SELECTION_INPUT=yaml parse_install_args >/dev/null 2>&1
 eq "parse_install_args selection input env" "$INSTALL_SELECTION_INPUT" "yaml"
 if parse_install_args --selection-input badformat >/dev/null 2>&1; then bad "parse_install_args accepted bad input"; else ok "parse_install_args rejects bad input"; fi
-CLI="$(MICROTYPO_CLI_OVERRIDE="$TEST_CLI" resolve_cli)"; rc=$?
-if [ "$rc" -eq 0 ] && [ -f "$CLI" ]; then ok "resolve_cli override -> $CLI"; else bad "resolve_cli override rc=$rc"; fi
+CLI="$(MICROTYPO_CLI_OVERRIDE="$TEST_CLI" resolve_cli_override)"; rc=$?
+if [ "$rc" -eq 0 ] && [ -f "$CLI" ]; then ok "resolve_cli_override -> $CLI"; else bad "resolve_cli_override rc=$rc"; fi
 
 # shellcheck disable=SC2016
 mk_fakenode() {
@@ -89,14 +88,19 @@ mk_fakenode() {
   chmod +x "$p"
 }
 
-mk_fakenode "$TMP/n263" "26.3.9"
-out="$(MICROTYPO_NODE_BIN="$TMP/n263" resolve_node)"
-if [ "$out" != "$TMP/n263" ]; then ok "resolve_node rejects 26.3.9 below floor"; else bad "resolve_node accepted 26.3.9 -> $out"; fi
+mk_fakenode "$TMP/n279" "26.7.9"
+out="$(MICROTYPO_NODE_BIN="$TMP/n279" resolve_node)"
+if [ "$out" != "$TMP/n279" ]; then ok "resolve_node rejects 26.7.9 below floor"; else bad "resolve_node accepted 26.7.9 -> $out"; fi
 
-mk_fakenode "$TMP/n264" "26.4.0"
-out="$(MICROTYPO_NODE_BIN="$TMP/n264" resolve_node)"
-expected_n264="$(cd "$(dirname "$TMP/n264")" && pwd)/n264"
-eq "resolve_node accepts 26.4.0 override" "$out" "$expected_n264"
+mk_fakenode "$TMP/n268" "26.8.0"
+out="$(MICROTYPO_NODE_BIN="$TMP/n268" resolve_node)"
+expected_n268="$(cd "$(dirname "$TMP/n268")" && pwd)/n268"
+eq "resolve_node accepts 26.8.0 override" "$out" "$expected_n268"
+
+rc=0; run_with_deadline 5 true || rc=$?
+eq "run_with_deadline returns the command status" "$rc" "0"
+rc=0; run_with_deadline 1 sleep 9 || rc=$?
+eq "run_with_deadline kills an overrunning command" "$rc" "$MICROTYPO_TIMEOUT_STATUS"
 
 # resolve_npm derives npm from the chosen node's directory, not fixed locations
 NPMDIR="$TMP/nodedir"; mkdir -p "$NPMDIR"
@@ -106,8 +110,8 @@ expected_colocated_npm="$(cd "$NPMDIR" && pwd)/npm"
 eq "resolve_npm prefers npm beside node" "$(resolve_npm "$NPMDIR/node")" "$expected_colocated_npm"
 eq "resolve_npm honors MICROTYPO_NPM_BIN override" "$(MICROTYPO_NPM_BIN="$NPMDIR/npm" resolve_npm /nonexistent/node)" "$expected_colocated_npm"
 
-out="$(MICROTYPO_CLI_OVERRIDE="$REPO_DIR/install.sh" resolve_cli)"
-eq "resolve_cli honors override as abs path" "$out" "$REPO_DIR/install.sh"
+out="$(MICROTYPO_CLI_OVERRIDE="$REPO_DIR/install.sh" resolve_cli_override)"
+eq "resolve_cli_override returns an absolute path" "$out" "$REPO_DIR/install.sh"
 
 # shellcheck disable=SC2016
 mk_fakenpm() {
@@ -139,17 +143,29 @@ INSTALL_LOG="$TMP/install.log"
 out="$(install_microtypo_package "$PRIVATE_PREFIX" "$FAKE_NPM" 2>"$INSTALL_LOG")"
 eq "install_microtypo_package returns private cli" "$out" "$PRIVATE_PREFIX/node_modules/microtypo/src/cli/index.js"
 if [ -f "$out" ]; then ok "install_microtypo_package writes private cli"; else bad "private cli missing"; fi
-eq "install_microtypo_package defaults to pinned package" "$(cat "$PRIVATE_PREFIX/package-spec.txt")" "microtypo@0.1.0"
+eq "install_microtypo_package defaults to pinned package" "$(cat "$PRIVATE_PREFIX/package-spec.txt")" "microtypo@0.2.0"
 if grep -q -- "--ignore-scripts" "$PRIVATE_PREFIX/npm-args.txt"; then ok "install disables npm lifecycle scripts"; else bad "install allows npm lifecycle scripts"; fi
-if grep -q "Installing microtypo@0.1.0" "$INSTALL_LOG"; then ok "install shows package status"; else bad "install status missing"; fi
-if grep -q "fake npm: fetching microtypo@0.1.0" "$INSTALL_LOG"; then ok "install shows npm progress"; else bad "npm progress hidden"; fi
-if grep -q "Installed microtypo@0.1.0" "$INSTALL_LOG"; then ok "install shows package completion"; else bad "install completion missing"; fi
+if grep -q "Installing microtypo@0.2.0" "$INSTALL_LOG"; then ok "install shows package status"; else bad "install status missing"; fi
+if grep -q "fake npm: fetching microtypo@0.2.0" "$INSTALL_LOG"; then ok "install shows npm progress"; else bad "npm progress hidden"; fi
+if grep -q "Installed microtypo@0.2.0" "$INSTALL_LOG"; then ok "install shows package completion"; else bad "install completion missing"; fi
 
 PRIVATE_PREFIX_EN="$TMP/private-npm-en"
 INSTALL_LOG_EN="$TMP/install-en.log"
 out_en="$(install_microtypo_package "$PRIVATE_PREFIX_EN" "$FAKE_NPM" 2>"$INSTALL_LOG_EN")"
 eq "install_microtypo_package returns second private cli" "$out_en" "$PRIVATE_PREFIX_EN/node_modules/microtypo/src/cli/index.js"
-if grep -q "Installing microtypo@0.1.0" "$INSTALL_LOG_EN"; then ok "install shows repeated package status"; else bad "repeated install status missing"; fi
+if grep -q "Installing microtypo@0.2.0" "$INSTALL_LOG_EN"; then ok "install shows repeated package status"; else bad "repeated install status missing"; fi
+
+ROLLBACK_PREFIX="$TMP/rollback-npm"; mkdir -p "$ROLLBACK_PREFIX"
+printf 'old runtime' > "$ROLLBACK_PREFIX/marker"
+FAILING_NPM="$TMP/npm-fail"
+printf '%s\n' '#!/bin/bash' 'exit 1' > "$FAILING_NPM"; chmod +x "$FAILING_NPM"
+if install_microtypo_package "$ROLLBACK_PREFIX" "$FAILING_NPM" >/dev/null 2>&1; then
+  bad "install reports success when npm fails"
+else
+  ok "install fails when npm fails"
+fi
+eq "failed install keeps the previous runtime" "$(cat "$ROLLBACK_PREFIX/marker" 2>/dev/null)" "old runtime"
+if ls -d "$TMP"/microtypo-stage.* >/dev/null 2>&1; then bad "install leaves a staging directory"; else ok "install cleans its staging directory"; fi
 
 WF_STAGE="$TMP/workflows"; rm -rf "$WF_STAGE"; mkdir -p "$WF_STAGE"
 install_workflow_bundle "$REPO_DIR/services/Microtypo Text.workflow" "$WF_STAGE/Microtypo Text.workflow" "Microtypo Text"
@@ -223,6 +239,14 @@ eq "noext->text"       "$(detect_format README)"         "text"
 if detect_format image.png >/dev/null; then bad "png must skip"; else ok "png skips (rc1)"; fi
 if detect_format script.js >/dev/null; then bad "js must skip"; else ok "js skips (rc1)"; fi
 eq "notification message" "$(notification_message 1 2 3)" "MicroTypo: 1, skipped: 2, errors: 3"
+eq "notification message reports a ceiling" "$(notification_message 1 0 0 files)" "MicroTypo: 1, stopped at limit"
+eq "progress message" "$(progress_message 5 20)" "MicroTypo: 5 of 20"
+eq "number keeps a plain number" "$(number 42 7)" "42"
+eq "number falls back on a non-number" "$(number abc 7)" "7"
+eq "number falls back on an empty value" "$(number '' 7)" "7"
+eq "log_path strips a newline from a name" "$(log_path "$(printf 'a\nb.txt')")" "a b.txt"
+# shellcheck disable=SC2030,SC2031,SC2034
+eq "progress message ru" "$(MT_LANG=ru; progress_message 5 20)" "MicroTypo: 5 из 20"
 # MT_LANG and LOG below are consumed by functions sourced from src/*.sh.
 # shellcheck disable=SC2030,SC2031,SC2034
 eq "notification message ru" "$(MT_LANG=ru; notification_message 1 2 3)" "MicroTypo: 1, пропущено: 2, ошибок: 3"
@@ -277,6 +301,94 @@ if grep -q '«Амбер' "$DIR/p.md" && grep -q '₽' "$DIR/p.md"; then ok "fol
 if [ ! -f "$DIR/.hidden/skip.txt.orig" ]; then ok "hidden pruned"; else bad "hidden not pruned"; fi
 if [ ! -f "$DIR/pkg.app/inner.txt.orig" ]; then ok "bundle .app pruned"; else bad "bundle .app not pruned"; fi
 
+echo "== batching =="
+# shellcheck disable=SC2016
+mk_recorder() {
+  printf '%s\n' \
+    '#!/bin/bash' \
+    'printf "%s|%s\n" "$PWD" "$*" >> "$FAKE_RECORD"' \
+    '[ -n "${FAKE_SLEEP:-}" ] && sleep "$FAKE_SLEEP"' \
+    'printf processed' \
+    > "$1"
+  chmod +x "$1"
+}
+
+REC_NODE="$TMP/rec-node"; mk_recorder "$REC_NODE"
+REC="$TMP/rec.log"
+: > "$TMP/fake-cli"
+cat > "$TMP/env-rec.sh" <<EOF
+NODE_BIN="$REC_NODE"
+MICROTYPO_CLI="$TMP/fake-cli"
+EOF
+
+BATCH="$TMP/batch"; rm -rf "$BATCH"; mkdir -p "$BATCH"
+for n in 1 2 3; do printf 'text %s\n' "$n" > "$BATCH/f$n.md"; done
+printf '{"a":1}\n' > "$BATCH/d1.json"
+printf '{"a":2}\n' > "$BATCH/d2.json"
+
+run_batch() {
+  : > "$REC"
+  : > "$MICROTYPO_LOG"
+  rm -f "$BATCH"/*.orig
+  env FAKE_RECORD="$REC" MICROTYPO_ENV="$TMP/env-rec.sh" "$@" bash "$FILE" "$BATCH" >/dev/null 2>&1
+}
+runs() { wc -l < "$REC" | tr -d '[:space:]'; }
+backups() { find "$BATCH" -name '*.orig' | wc -l | tr -d '[:space:]'; }
+
+run_batch
+eq "batch runs one process per format" "$(runs)" "2"
+md_line="$(grep -F -- '--input frontmatter' "$REC")"
+eq "batch runs in the target directory" "${md_line%%|*}" "$BATCH"
+case "$md_line" in
+  *"--write -- "*) ok "batch terminates options before file names" ;;
+  *)               bad "batch terminates options before file names ($md_line)" ;;
+esac
+missing=""
+for n in 1 2 3; do
+  case "$md_line" in *"$BATCH/f$n.md"*) ;; *) missing="$missing f$n.md" ;; esac
+done
+if [ -z "$missing" ]; then ok "batch sends a whole format in one run"; else bad "batch left out:$missing"; fi
+case "$md_line" in
+  *.json*) bad "batch mixes formats in one run ($md_line)" ;;
+  *)       ok "batch keeps formats apart" ;;
+esac
+
+run_batch MICROTYPO_CHUNK_FILES=2
+eq "chunk file ceiling splits the run" "$(runs)" "3"
+run_batch MICROTYPO_CHUNK_BYTES=10
+eq "chunk byte ceiling splits the run" "$(runs)" "5"
+
+printf 'dash\n' > "$BATCH/-lead.md"
+run_batch
+md_line="$(grep -F -- '--input frontmatter' "$REC")"
+case "$md_line" in
+  *"--write -- "*"$BATCH/-lead.md"*) ok "file with a leading dash goes after the terminator" ;;
+  *) bad "file with a leading dash goes after the terminator ($md_line)" ;;
+esac
+rm -f "$BATCH/-lead.md"
+
+run_batch MICROTYPO_MAX_FILES=2
+if grep -q "stop: file limit 2" "$MICROTYPO_LOG"; then ok "file ceiling stops collection"; else bad "file ceiling not logged"; fi
+eq "file ceiling limits what runs" "$(backups)" "2"
+
+run_batch MICROTYPO_MAX_SECONDS=0
+if grep -q "stop: time limit 0s" "$MICROTYPO_LOG"; then ok "time ceiling stops the run"; else bad "time ceiling not logged"; fi
+eq "time ceiling starts no CLI" "$(runs)" "0"
+
+run_batch MICROTYPO_MAX_SECONDS=abc
+eq "a malformed ceiling falls back instead of stopping the run" "$(runs)" "2"
+
+SLOW="$TMP/slow"; rm -rf "$SLOW"; mkdir -p "$SLOW"; printf 'slow\n' > "$SLOW/s.md"
+: > "$MICROTYPO_LOG"; : > "$REC"
+env FAKE_RECORD="$REC" FAKE_SLEEP=9 MICROTYPO_TIMEOUT=1 MICROTYPO_ENV="$TMP/env-rec.sh" \
+  bash "$FILE" "$SLOW" >/dev/null 2>&1
+if grep -q "timeout chunk (frontmatter, 1)" "$MICROTYPO_LOG"; then ok "chunk deadline kills a stuck CLI"; else bad "chunk deadline not logged"; fi
+
+: > "$REC"
+out="$(printf 'plain' | env FAKE_RECORD="$REC" MICROTYPO_ENV="$TMP/env-rec.sh" bash "$SEL")"
+eq "selection returns the CLI output" "$out" "processed"
+eq "selection runs in \$HOME" "$(head -n 1 "$REC" | sed 's/|.*//')" "$HOME"
+
 echo "== plists =="
 SVC_A="$REPO_DIR/services/Microtypo Text.workflow/Contents"
 SVC_B="$REPO_DIR/services/Microtypo File.workflow/Contents"
@@ -310,23 +422,31 @@ else
 fi
 
 echo "== release artifacts =="
+REL_VERSION="$(cat "$REPO_DIR/VERSION")"
+REL_TAG="v$REL_VERSION"
+REL_BUNDLE="microtypo-actions-$REL_TAG"
 REL_DIST="$TMP/release-dist"
 REL_LOG="$TMP/release-build.log"
-if "$REPO_DIR/scripts/build-release.sh" v0.0.0-test "$REL_DIST" meritt/microtypo-actions >"$REL_LOG" 2>&1; then
+if "$REPO_DIR/scripts/build-release.sh" "$REL_TAG" "$REL_DIST" meritt/microtypo-actions >"$REL_LOG" 2>&1; then
   ok "build-release creates artifacts"
 else
   bad "build-release failed ($(cat "$REL_LOG"))"
 fi
+if "$REPO_DIR/scripts/build-release.sh" v0.0.0-mismatch "$TMP/release-mismatch" meritt/microtypo-actions >/dev/null 2>&1; then
+  bad "build-release accepts a tag that disagrees with VERSION"
+else
+  ok "build-release refuses a tag that disagrees with VERSION"
+fi
 REL_RELATIVE="$TMP/release-relative"
 mkdir -p "$REL_RELATIVE"
-if (cd "$REL_RELATIVE" && "$REPO_DIR/scripts/build-release.sh" v0.0.0-rel dist meritt/microtypo-actions >/dev/null 2>&1) \
-  && [ -f "$REL_RELATIVE/dist/microtypo-actions-v0.0.0-rel.tar.gz" ]; then
+if (cd "$REL_RELATIVE" && "$REPO_DIR/scripts/build-release.sh" "$REL_TAG" dist meritt/microtypo-actions >/dev/null 2>&1) \
+  && [ -f "$REL_RELATIVE/dist/$REL_BUNDLE.tar.gz" ]; then
   ok "build-release supports relative out dir"
 else
   bad "build-release relative out dir failed"
 fi
 
-REL_ARCHIVE="$REL_DIST/microtypo-actions-v0.0.0-test.tar.gz"
+REL_ARCHIVE="$REL_DIST/$REL_BUNDLE.tar.gz"
 if [ -f "$REL_ARCHIVE" ]; then ok "release archive exists"; else bad "release archive missing"; fi
 if [ -f "$REL_ARCHIVE.sha256" ]; then ok "release archive checksum exists"; else bad "release archive checksum missing"; fi
 if [ -x "$REL_DIST/install.sh" ]; then ok "release bootstrap installer exists"; else bad "release bootstrap installer missing"; fi
@@ -335,7 +455,7 @@ if grep -q "DEFAULT_REPO='meritt/microtypo-actions'" "$REL_DIST/install.sh"; the
 else
   bad "release bootstrap repository missing"
 fi
-if (cd "$REL_DIST" && shasum -a 256 -c "microtypo-actions-v0.0.0-test.tar.gz.sha256" >/dev/null 2>&1); then
+if (cd "$REL_DIST" && shasum -a 256 -c "$REL_BUNDLE.tar.gz.sha256" >/dev/null 2>&1); then
   ok "release checksum verifies"
 else
   bad "release checksum does not verify"
@@ -345,12 +465,14 @@ REL_CONTENTS="$(tar -tzf "$REL_ARCHIVE" 2>/dev/null)"
 has_release_path() {
   if printf '%s\n' "$REL_CONTENTS" | grep -Fqx "$1"; then ok "$2"; else bad "$2"; fi
 }
-has_release_path "microtypo-actions-v0.0.0-test/install.sh" "release archive includes installer"
-has_release_path "microtypo-actions-v0.0.0-test/uninstall.sh" "release archive includes uninstaller"
-has_release_path "microtypo-actions-v0.0.0-test/src/typograph-selection.sh" "release archive includes selection script"
-has_release_path "microtypo-actions-v0.0.0-test/src/typograph-file.sh" "release archive includes file script"
-has_release_path "microtypo-actions-v0.0.0-test/services/Microtypo Text.workflow/Contents/Info.plist" "release archive includes text workflow plist"
-has_release_path "microtypo-actions-v0.0.0-test/services/Microtypo File.workflow/Contents/document.wflow" "release archive includes file workflow document"
+has_release_path "$REL_BUNDLE/install.sh" "release archive includes installer"
+has_release_path "$REL_BUNDLE/uninstall.sh" "release archive includes uninstaller"
+has_release_path "$REL_BUNDLE/VERSION" "release archive includes VERSION"
+has_release_path "$REL_BUNDLE/src/common.sh" "release archive includes shared helpers"
+has_release_path "$REL_BUNDLE/src/typograph-selection.sh" "release archive includes selection script"
+has_release_path "$REL_BUNDLE/src/typograph-file.sh" "release archive includes file script"
+has_release_path "$REL_BUNDLE/services/Microtypo Text.workflow/Contents/Info.plist" "release archive includes text workflow plist"
+has_release_path "$REL_BUNDLE/services/Microtypo File.workflow/Contents/document.wflow" "release archive includes file workflow document"
 if printf '%s\n' "$REL_CONTENTS" | grep -q '/tests/'; then bad "release archive includes tests"; else ok "release archive excludes tests"; fi
 if printf '%s\n' "$REL_CONTENTS" | grep -q '\.DS_Store'; then bad "release archive includes .DS_Store"; else ok "release archive excludes .DS_Store"; fi
 
@@ -380,4 +502,4 @@ MICROTYPO_APPSUP="$U_APPSUP" MICROTYPO_SERVICES="$U_SERVICES" MICROTYPO_LOG="$U_
 if [ -e "$U_LOG" ]; then ok "uninstall --keep-logs keeps log"; else bad "uninstall --keep-logs removed log"; fi
 if [ ! -e "$U_APPSUP" ]; then ok "uninstall --keep-logs still removes runtime"; else bad "keep-logs left runtime"; fi
 
-echo; echo "PASS=$PASS FAIL=$FAIL"; [ "$FAIL" -eq 0 ]
+summary
