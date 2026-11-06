@@ -7,7 +7,7 @@ macOS Quick Actions for applying [`microtypo`](https://github.com/meritt/microty
 ## Requirements
 
 - macOS 26 or later
-- Node.js 26.8 or later
+- Node.js 26.13 or later
 - npm
 
 ## Install

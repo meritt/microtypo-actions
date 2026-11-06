@@ -19,7 +19,7 @@ const fs = require('fs');
 
 const args = process.argv.slice(2);
 if (args.includes('--version')) {
-  process.stdout.write('0.2.0\n');
+  process.stdout.write('0.3.1\n');
   process.exit(0);
 }
 
@@ -88,14 +88,14 @@ mk_fakenode() {
   chmod +x "$p"
 }
 
-mk_fakenode "$TMP/n279" "26.7.9"
-out="$(MICROTYPO_NODE_BIN="$TMP/n279" resolve_node)"
-if [ "$out" != "$TMP/n279" ]; then ok "resolve_node rejects 26.7.9 below floor"; else bad "resolve_node accepted 26.7.9 -> $out"; fi
+mk_fakenode "$TMP/n26129" "26.12.9"
+out="$(MICROTYPO_NODE_BIN="$TMP/n26129" resolve_node)"
+if [ "$out" != "$TMP/n26129" ]; then ok "resolve_node rejects 26.12.9 below floor"; else bad "resolve_node accepted 26.12.9 -> $out"; fi
 
-mk_fakenode "$TMP/n268" "26.8.0"
-out="$(MICROTYPO_NODE_BIN="$TMP/n268" resolve_node)"
-expected_n268="$(cd "$(dirname "$TMP/n268")" && pwd)/n268"
-eq "resolve_node accepts 26.8.0 override" "$out" "$expected_n268"
+mk_fakenode "$TMP/n26130" "26.13.0"
+out="$(MICROTYPO_NODE_BIN="$TMP/n26130" resolve_node)"
+expected_n26130="$(cd "$(dirname "$TMP/n26130")" && pwd)/n26130"
+eq "resolve_node accepts 26.13.0 override" "$out" "$expected_n26130"
 
 rc=0; run_with_deadline 5 true || rc=$?
 eq "run_with_deadline returns the command status" "$rc" "0"
@@ -143,17 +143,17 @@ INSTALL_LOG="$TMP/install.log"
 out="$(install_microtypo_package "$PRIVATE_PREFIX" "$FAKE_NPM" 2>"$INSTALL_LOG")"
 eq "install_microtypo_package returns private cli" "$out" "$PRIVATE_PREFIX/node_modules/microtypo/src/cli/index.js"
 if [ -f "$out" ]; then ok "install_microtypo_package writes private cli"; else bad "private cli missing"; fi
-eq "install_microtypo_package defaults to pinned package" "$(cat "$PRIVATE_PREFIX/package-spec.txt")" "microtypo@0.2.0"
+eq "install_microtypo_package defaults to pinned package" "$(cat "$PRIVATE_PREFIX/package-spec.txt")" "microtypo@0.3.1"
 if grep -q -- "--ignore-scripts" "$PRIVATE_PREFIX/npm-args.txt"; then ok "install disables npm lifecycle scripts"; else bad "install allows npm lifecycle scripts"; fi
-if grep -q "Installing microtypo@0.2.0" "$INSTALL_LOG"; then ok "install shows package status"; else bad "install status missing"; fi
-if grep -q "fake npm: fetching microtypo@0.2.0" "$INSTALL_LOG"; then ok "install shows npm progress"; else bad "npm progress hidden"; fi
-if grep -q "Installed microtypo@0.2.0" "$INSTALL_LOG"; then ok "install shows package completion"; else bad "install completion missing"; fi
+if grep -q "Installing microtypo@0.3.1" "$INSTALL_LOG"; then ok "install shows package status"; else bad "install status missing"; fi
+if grep -q "fake npm: fetching microtypo@0.3.1" "$INSTALL_LOG"; then ok "install shows npm progress"; else bad "npm progress hidden"; fi
+if grep -q "Installed microtypo@0.3.1" "$INSTALL_LOG"; then ok "install shows package completion"; else bad "install completion missing"; fi
 
 PRIVATE_PREFIX_EN="$TMP/private-npm-en"
 INSTALL_LOG_EN="$TMP/install-en.log"
 out_en="$(install_microtypo_package "$PRIVATE_PREFIX_EN" "$FAKE_NPM" 2>"$INSTALL_LOG_EN")"
 eq "install_microtypo_package returns second private cli" "$out_en" "$PRIVATE_PREFIX_EN/node_modules/microtypo/src/cli/index.js"
-if grep -q "Installing microtypo@0.2.0" "$INSTALL_LOG_EN"; then ok "install shows repeated package status"; else bad "repeated install status missing"; fi
+if grep -q "Installing microtypo@0.3.1" "$INSTALL_LOG_EN"; then ok "install shows repeated package status"; else bad "repeated install status missing"; fi
 
 ROLLBACK_PREFIX="$TMP/rollback-npm"; mkdir -p "$ROLLBACK_PREFIX"
 printf 'old runtime' > "$ROLLBACK_PREFIX/marker"
