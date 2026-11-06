@@ -10,7 +10,7 @@ Usage: scripts/build-release.sh <version-tag> [out-dir] [github-repo]
 The tag must match the VERSION file, prefixed with "v".
 
 Example:
-  scripts/build-release.sh v0.2.0 dist meritt/microtypo-actions
+  scripts/build-release.sh v0.3.0 dist meritt/microtypo-actions
 EOF
 }
 

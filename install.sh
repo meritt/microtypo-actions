@@ -5,12 +5,12 @@ REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=src/common.sh
 . "$REPO_DIR/src/common.sh" || exit 1
 
-MICROTYPO_DEFAULT_NPM_SPEC="microtypo@0.2.0"
+MICROTYPO_DEFAULT_NPM_SPEC="microtypo@0.3.1"
 
-# Minimum Node.js the microtypo CLI needs (microtypo engines: node >=26.8.0).
+# Minimum Node.js the microtypo CLI needs (microtypo engines: node >=26.13.0).
 # readme.md documents the same floor; keep both in sync.
 MICROTYPO_NODE_MIN_MAJOR=26
-MICROTYPO_NODE_MIN_MINOR=8
+MICROTYPO_NODE_MIN_MINOR=13
 
 install_step() { printf '==> %s\n' "$1" >&2; }
 install_detail() { printf '    %s\n' "$1" >&2; }
