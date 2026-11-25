@@ -1,0 +1,7 @@
+{
+  "name": "microtypo-actions-runtime",
+  "private": true,
+  "dependencies": {
+    "microtypo": "0.4.2"
+  }
+}

@@ -48,7 +48,7 @@ print_usage() {
     '  --keep-logs   Keep ~/Library/Logs/microtypo.log.' \
     '  -h, --help    Show this help.' \
     '' \
-    'Backups: files renamed to <file>.orig are left in place on purpose.'
+    'Backups named <file>.orig are kept.'
 }
 
 remove_path() {
