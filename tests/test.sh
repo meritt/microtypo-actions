@@ -11,7 +11,7 @@ REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP="${TMPDIR:-/tmp}/microtypo-actions-test.$$"
 trap 'rm -rf "$TMP"' EXIT
 mkdir -p "$TMP"
-TMP="$(cd "$TMP" && pwd)"
+TMP="$(cd "$TMP" && pwd -P)"
 
 TEST_CLI="$TMP/microtypo-cli.js"
 cat > "$TEST_CLI" <<'EOF'
@@ -19,7 +19,7 @@ const fs = require('fs');
 
 const args = process.argv.slice(2);
 if (args.includes('--version')) {
-  process.stdout.write('0.3.1\n');
+  process.stdout.write('0.0.0\n');
   process.exit(0);
 }
 
@@ -62,7 +62,9 @@ NODE="$(resolve_node)"; rc=$?
 if [ "$rc" -eq 0 ] && [ -x "$NODE" ]; then ok "resolve_node -> $NODE"; else bad "resolve_node rc=$rc"; fi
 eq "service text" "$(service_name text)" "Microtypo Text"
 eq "service file" "$(service_name file)" "Microtypo File"
-if validate_input_format markdown >/dev/null 2>&1; then ok "validate_input_format accepts markdown"; else bad "markdown rejected"; fi
+for f in text plain html markdown mdx json xml yaml toml frontmatter; do
+  if validate_input_format "$f"; then ok "validate_input_format accepts $f"; else bad "$f rejected"; fi
+done
 if validate_input_format badformat >/dev/null 2>&1; then bad "bad input format accepted"; else ok "validate_input_format rejects bad format"; fi
 parse_install_args --selection-input text >/dev/null 2>&1
 eq "parse_install_args selection input flag" "$INSTALL_SELECTION_INPUT" "text"
@@ -119,19 +121,17 @@ mk_fakenpm() {
   printf '%s\n' \
     '#!/bin/bash' \
     'all_args="$*"' \
-    'prefix=""; spec=""' \
+    'prefix=""' \
     'while [ "$#" -gt 0 ]; do' \
     '  case "$1" in' \
     '    --prefix) prefix="$2"; shift 2 ;;' \
-    '    --*) shift ;;' \
-    '    *) spec="$1"; shift ;;' \
+    '    *) shift ;;' \
     '  esac' \
     'done' \
-    '[ -n "$prefix" ] || exit 2' \
-    'printf "fake npm: fetching %s\n" "$spec"' \
+    '[ -n "$prefix" ] && [ -f "$prefix/package-lock.json" ] || exit 2' \
+    'printf "fake npm: installing from lockfile\n"' \
     'mkdir -p "$prefix/node_modules/microtypo/src/cli" || exit 1' \
     'printf "%s\n" "#!/usr/bin/env node" > "$prefix/node_modules/microtypo/src/cli/index.js"' \
-    'printf "%s\n" "$spec" > "$prefix/package-spec.txt"' \
     'printf "%s\n" "$all_args" > "$prefix/npm-args.txt"' \
     > "$p"
   chmod +x "$p"
@@ -143,17 +143,21 @@ INSTALL_LOG="$TMP/install.log"
 out="$(install_microtypo_package "$PRIVATE_PREFIX" "$FAKE_NPM" 2>"$INSTALL_LOG")"
 eq "install_microtypo_package returns private cli" "$out" "$PRIVATE_PREFIX/node_modules/microtypo/src/cli/index.js"
 if [ -f "$out" ]; then ok "install_microtypo_package writes private cli"; else bad "private cli missing"; fi
-eq "install_microtypo_package defaults to pinned package" "$(cat "$PRIVATE_PREFIX/package-spec.txt")" "microtypo@0.3.1"
+case "$(cat "$PRIVATE_PREFIX/npm-args.txt") " in
+  "ci "*) ok "install runs npm ci" ;;
+  *)      bad "install does not run npm ci ($(cat "$PRIVATE_PREFIX/npm-args.txt"))" ;;
+esac
 if grep -q -- "--ignore-scripts" "$PRIVATE_PREFIX/npm-args.txt"; then ok "install disables npm lifecycle scripts"; else bad "install allows npm lifecycle scripts"; fi
-if grep -q "Installing microtypo@0.3.1" "$INSTALL_LOG"; then ok "install shows package status"; else bad "install status missing"; fi
-if grep -q "fake npm: fetching microtypo@0.3.1" "$INSTALL_LOG"; then ok "install shows npm progress"; else bad "npm progress hidden"; fi
-if grep -q "Installed microtypo@0.3.1" "$INSTALL_LOG"; then ok "install shows package completion"; else bad "install completion missing"; fi
+if cmp -s "$PRIVATE_PREFIX/package-lock.json" "$REPO_DIR/runtime/package-lock.json"; then ok "install ships the lockfile"; else bad "installed lockfile differs"; fi
+if grep -q "Installing microtypo@$(pinned_version)" "$INSTALL_LOG"; then ok "install shows package status"; else bad "install status missing"; fi
+if grep -q "fake npm: installing from lockfile" "$INSTALL_LOG"; then ok "install shows npm progress"; else bad "npm progress hidden"; fi
 
-PRIVATE_PREFIX_EN="$TMP/private-npm-en"
-INSTALL_LOG_EN="$TMP/install-en.log"
-out_en="$(install_microtypo_package "$PRIVATE_PREFIX_EN" "$FAKE_NPM" 2>"$INSTALL_LOG_EN")"
-eq "install_microtypo_package returns second private cli" "$out_en" "$PRIVATE_PREFIX_EN/node_modules/microtypo/src/cli/index.js"
-if grep -q "Installing microtypo@0.3.1" "$INSTALL_LOG_EN"; then ok "install shows repeated package status"; else bad "repeated install status missing"; fi
+LOCK="$REPO_DIR/runtime/package-lock.json"
+lock_version="$(sed -n '/"node_modules\/microtypo"/,/}/s/.*"version": "\([^"]*\)".*/\1/p' "$LOCK")"
+lock_floor="$(sed -n '/"node_modules\/microtypo"/,$s/.*"node": ">=\([0-9]*\.[0-9]*\)\..*/\1/p' "$LOCK")"
+eq "package.json pins the locked version" "$(pinned_version)" "$lock_version"
+eq "node floor matches the locked engines" "$MICROTYPO_NODE_MIN_MAJOR.$MICROTYPO_NODE_MIN_MINOR" "$lock_floor"
+if grep -q '"integrity": "sha512-' "$LOCK"; then ok "lockfile pins package bytes"; else bad "lockfile has no integrity"; fi
 
 ROLLBACK_PREFIX="$TMP/rollback-npm"; mkdir -p "$ROLLBACK_PREFIX"
 printf 'old runtime' > "$ROLLBACK_PREFIX/marker"
@@ -181,21 +185,21 @@ export MICROTYPO_ENV="$TMP/env.sh"
 export MICROTYPO_LOG="$TMP/microtypo.log"
 SEL="$REPO_DIR/src/typograph-selection.sh"
 
-out="$(printf '"Амбер" -- 150000 руб.' | bash "$SEL")"
+out="$(printf '"Амбер" -- 150000 руб.' | "$BASH" "$SEL")"
 eq "selection typography" "$out" "«Амбер» — 150 000 ₽"
 
-out="$(printf '' | bash "$SEL")"
+out="$(printf '' | "$BASH" "$SEL")"
 eq "selection empty->empty" "$out" ""
 
 big="$(head -c 40000 /dev/zero | tr '\0' 'a')"
-out="$(printf '%s' "$big" | MICROTYPO_ENV="$TMP/env.sh" bash "$SEL")"
+out="$(printf '%s' "$big" | MICROTYPO_ENV="$TMP/env.sh" "$BASH" "$SEL")"
 eq "selection oversize restores original" "$out" "$big"
 
 nl_in="$big"$'\n'
-cap="$(printf '%s' "$nl_in" | MICROTYPO_ENV="$TMP/env.sh" bash "$SEL"; printf x)"; cap="${cap%x}"
+cap="$(printf '%s' "$nl_in" | MICROTYPO_ENV="$TMP/env.sh" "$BASH" "$SEL"; printf x)"; cap="${cap%x}"
 eq "oversize fallback preserves trailing newline" "$cap" "$nl_in"
 
-out="$(printf 'просто' | bash "$SEL" | xxd -p | tr -d '\n')"
+out="$(printf 'просто' | "$BASH" "$SEL" | xxd -p | tr -d '\n')"
 last2="${out: -2}"
 if [ "$last2" != "0a" ]; then ok "selection no trailing newline"; else bad "selection added trailing newline"; fi
 
@@ -212,7 +216,7 @@ NODE_BIN="$FAKE_NODE_SEL"
 MICROTYPO_CLI="$TMP/fake-cli"
 MICROTYPO_SELECTION_INPUT="markdown"
 EOF
-out="$(printf 'plain' | FAKE_NODE_ARGS_LOG="$TMP/fake-node-args" MICROTYPO_ENV="$TMP/env-selection-markdown.sh" bash "$SEL")"
+out="$(printf 'plain' | FAKE_NODE_ARGS_LOG="$TMP/fake-node-args" MICROTYPO_ENV="$TMP/env-selection-markdown.sh" "$BASH" "$SEL")"
 eq "selection fake cli output" "$out" "processed"
 eq "selection passes bounded markdown input" "$(cat "$TMP/fake-node-args")" "$TMP/fake-cli --input markdown --max-input 5000000 --max-ms 30000"
 
@@ -221,7 +225,7 @@ NODE_BIN="$FAKE_NODE_SEL"
 MICROTYPO_CLI="$TMP/fake-cli"
 MICROTYPO_SELECTION_INPUT="text"
 EOF
-printf 'plain' | FAKE_NODE_ARGS_LOG="$TMP/fake-node-args" MICROTYPO_ENV="$TMP/env-selection-text.sh" bash "$SEL" >/dev/null
+printf 'plain' | FAKE_NODE_ARGS_LOG="$TMP/fake-node-args" MICROTYPO_ENV="$TMP/env-selection-text.sh" "$BASH" "$SEL" >/dev/null
 eq "selection input override text stays bounded" "$(cat "$TMP/fake-node-args")" "$TMP/fake-cli --input text --max-input 5000000 --max-ms 30000"
 
 echo "== detect_format =="
@@ -229,6 +233,7 @@ echo "== detect_format =="
 . "$REPO_DIR/src/typograph-file.sh"
 eq "md->frontmatter"   "$(detect_format post.md)"        "frontmatter"
 eq "markdown->fm"      "$(detect_format a.markdown)"     "frontmatter"
+eq "mdx->mdx"          "$(detect_format page.MDX)"       "mdx"
 eq "html->html"        "$(detect_format i.HTML)"         "html"
 eq "json->json"        "$(detect_format data.json)"      "json"
 eq "yaml->yaml"        "$(detect_format c.yml)"          "yaml"
@@ -270,7 +275,7 @@ cp tests/fixtures/note.txt   "$WORK/b.txt"
 cp tests/fixtures/pic.png    "$WORK/c.png"
 FILE="$REPO_DIR/src/typograph-file.sh"
 
-MICROTYPO_ENV="$TMP/env.sh" bash "$FILE" "$WORK/a.json" "$WORK/b.txt" "$WORK/c.png" >/dev/null 2>&1
+MICROTYPO_ENV="$TMP/env.sh" "$BASH" "$FILE" "$WORK/a.json" "$WORK/b.txt" "$WORK/c.png" >/dev/null 2>&1
 
 if grep -q '—' "$WORK/a.json"; then ok "json typeset in place"; else bad "json not typeset"; fi
 if grep -q '"n":150000' "$WORK/a.json"; then ok "json structure preserved"; else bad "json structure changed"; fi
@@ -281,13 +286,25 @@ if grep -q "$WORK/a.json" "$MICROTYPO_LOG"; then bad "default log exposes full p
 if grep -q "ok a.json (json)" "$MICROTYPO_LOG"; then ok "default log keeps basename status"; else bad "default log missing basename status"; fi
 
 before="$(cat "$WORK/a.json.orig")"
-MICROTYPO_ENV="$TMP/env.sh" bash "$FILE" "$WORK/a.json" >/dev/null 2>&1
+MICROTYPO_ENV="$TMP/env.sh" "$BASH" "$FILE" "$WORK/a.json" >/dev/null 2>&1
 eq "orig not clobbered on re-run" "$(cat "$WORK/a.json.orig")" "$before"
+
+printf 'plain\n' > "$WORK/same.txt"
+MICROTYPO_ENV="$TMP/env.sh" "$BASH" "$FILE" "$WORK/same.txt" >/dev/null 2>&1
+if [ ! -e "$WORK/same.txt.orig" ]; then ok "unchanged file keeps no backup"; else bad "unchanged file left a backup"; fi
+
+: > "$MICROTYPO_LOG"
+printf '"Амбер"\n' > "$WORK/trap.txt"
+ln -s "$TMP/planted" "$WORK/trap.txt.orig"
+MICROTYPO_ENV="$TMP/env.sh" "$BASH" "$FILE" "$WORK/trap.txt" >/dev/null 2>&1
+if [ ! -e "$TMP/planted" ]; then ok "backup never writes through a symlink"; else bad "backup followed a planted symlink"; fi
+eq "file with a symlinked backup stays untouched" "$(cat "$WORK/trap.txt")" '"Амбер"'
+if grep -q "backup-fail trap.txt" "$MICROTYPO_LOG"; then ok "symlinked backup logged as failure"; else bad "symlinked backup not logged"; fi
 
 : > "$MICROTYPO_LOG"
 printf 'plain' > "$WORK/target.txt"
 ln -s "$WORK/target.txt" "$WORK/link.txt"
-MICROTYPO_ENV="$TMP/env.sh" bash "$FILE" "$WORK/link.txt" >/dev/null 2>&1
+MICROTYPO_ENV="$TMP/env.sh" "$BASH" "$FILE" "$WORK/link.txt" >/dev/null 2>&1
 eq "symlink target unchanged" "$(cat "$WORK/target.txt")" "plain"
 if [ ! -e "$WORK/link.txt.orig" ]; then ok "symlink skipped without backup"; else bad "symlink backup created"; fi
 if grep -q "skip link.txt (symlink)" "$MICROTYPO_LOG"; then ok "symlink skip logged"; else bad "symlink skip not logged"; fi
@@ -296,7 +313,7 @@ DIR="$WORK/dir"; mkdir -p "$DIR/.hidden"
 cp tests/fixtures/sample.md "$DIR/p.md"
 cp tests/fixtures/note.txt  "$DIR/.hidden/skip.txt"
 mkdir -p "$DIR/pkg.app"; cp tests/fixtures/note.txt "$DIR/pkg.app/inner.txt"
-MICROTYPO_ENV="$TMP/env.sh" bash "$FILE" "$DIR" >/dev/null 2>&1
+MICROTYPO_ENV="$TMP/env.sh" "$BASH" "$FILE" "$DIR" >/dev/null 2>&1
 if grep -q '«Амбер' "$DIR/p.md" && grep -q '₽' "$DIR/p.md"; then ok "folder recursion typeset md"; else bad "md not typeset"; fi
 if [ ! -f "$DIR/.hidden/skip.txt.orig" ]; then ok "hidden pruned"; else bad "hidden not pruned"; fi
 if [ ! -f "$DIR/pkg.app/inner.txt.orig" ]; then ok "bundle .app pruned"; else bad "bundle .app not pruned"; fi
@@ -330,10 +347,10 @@ run_batch() {
   : > "$REC"
   : > "$MICROTYPO_LOG"
   rm -f "$BATCH"/*.orig
-  env FAKE_RECORD="$REC" MICROTYPO_ENV="$TMP/env-rec.sh" "$@" bash "$FILE" "$BATCH" >/dev/null 2>&1
+  env FAKE_RECORD="$REC" MICROTYPO_ENV="$TMP/env-rec.sh" "$@" "$BASH" "$FILE" "$BATCH" >/dev/null 2>&1
 }
 runs() { wc -l < "$REC" | tr -d '[:space:]'; }
-backups() { find "$BATCH" -name '*.orig' | wc -l | tr -d '[:space:]'; }
+sent() { grep -o "$BATCH/[^ ]*" "$REC" | wc -l | tr -d '[:space:]'; }
 
 run_batch
 eq "batch runs one process per format" "$(runs)" "2"
@@ -369,7 +386,7 @@ rm -f "$BATCH/-lead.md"
 
 run_batch MICROTYPO_MAX_FILES=2
 if grep -q "stop: file limit 2" "$MICROTYPO_LOG"; then ok "file ceiling stops collection"; else bad "file ceiling not logged"; fi
-eq "file ceiling limits what runs" "$(backups)" "2"
+eq "file ceiling limits what runs" "$(sent)" "2"
 
 run_batch MICROTYPO_MAX_SECONDS=0
 if grep -q "stop: time limit 0s" "$MICROTYPO_LOG"; then ok "time ceiling stops the run"; else bad "time ceiling not logged"; fi
@@ -381,11 +398,11 @@ eq "a malformed ceiling falls back instead of stopping the run" "$(runs)" "2"
 SLOW="$TMP/slow"; rm -rf "$SLOW"; mkdir -p "$SLOW"; printf 'slow\n' > "$SLOW/s.md"
 : > "$MICROTYPO_LOG"; : > "$REC"
 env FAKE_RECORD="$REC" FAKE_SLEEP=9 MICROTYPO_TIMEOUT=1 MICROTYPO_ENV="$TMP/env-rec.sh" \
-  bash "$FILE" "$SLOW" >/dev/null 2>&1
+  "$BASH" "$FILE" "$SLOW" >/dev/null 2>&1
 if grep -q "timeout chunk (frontmatter, 1)" "$MICROTYPO_LOG"; then ok "chunk deadline kills a stuck CLI"; else bad "chunk deadline not logged"; fi
 
 : > "$REC"
-out="$(printf 'plain' | env FAKE_RECORD="$REC" MICROTYPO_ENV="$TMP/env-rec.sh" bash "$SEL")"
+out="$(printf 'plain' | env FAKE_RECORD="$REC" MICROTYPO_ENV="$TMP/env-rec.sh" "$BASH" "$SEL")"
 eq "selection returns the CLI output" "$out" "processed"
 eq "selection runs in \$HOME" "$(head -n 1 "$REC" | sed 's/|.*//')" "$HOME"
 
@@ -468,6 +485,8 @@ has_release_path() {
 has_release_path "$REL_BUNDLE/install.sh" "release archive includes installer"
 has_release_path "$REL_BUNDLE/uninstall.sh" "release archive includes uninstaller"
 has_release_path "$REL_BUNDLE/VERSION" "release archive includes VERSION"
+has_release_path "$REL_BUNDLE/runtime/package.json" "release archive includes the runtime manifest"
+has_release_path "$REL_BUNDLE/runtime/package-lock.json" "release archive includes the runtime lockfile"
 has_release_path "$REL_BUNDLE/src/common.sh" "release archive includes shared helpers"
 has_release_path "$REL_BUNDLE/src/typograph-selection.sh" "release archive includes selection script"
 has_release_path "$REL_BUNDLE/src/typograph-file.sh" "release archive includes file script"
@@ -489,7 +508,7 @@ setup_uninstall() {
 
 setup_uninstall
 MICROTYPO_APPSUP="$U_APPSUP" MICROTYPO_SERVICES="$U_SERVICES" MICROTYPO_LOG="$U_LOG" MICROTYPO_SKIP_PBS=1 \
-  bash "$REPO_DIR/uninstall.sh" >/dev/null 2>&1
+  "$BASH" "$REPO_DIR/uninstall.sh" >/dev/null 2>&1
 if [ ! -e "$U_APPSUP" ]; then ok "uninstall removes runtime"; else bad "uninstall left runtime"; fi
 if [ ! -e "$U_SERVICES/Microtypo Text.workflow" ]; then ok "uninstall removes text workflow"; else bad "uninstall left text workflow"; fi
 if [ ! -e "$U_SERVICES/Microtypo File.workflow" ]; then ok "uninstall removes file workflow"; else bad "uninstall left file workflow"; fi
@@ -498,7 +517,7 @@ if [ -d "$U_SERVICES" ]; then ok "uninstall keeps Services directory"; else bad 
 
 setup_uninstall
 MICROTYPO_APPSUP="$U_APPSUP" MICROTYPO_SERVICES="$U_SERVICES" MICROTYPO_LOG="$U_LOG" MICROTYPO_SKIP_PBS=1 \
-  bash "$REPO_DIR/uninstall.sh" --keep-logs >/dev/null 2>&1
+  "$BASH" "$REPO_DIR/uninstall.sh" --keep-logs >/dev/null 2>&1
 if [ -e "$U_LOG" ]; then ok "uninstall --keep-logs keeps log"; else bad "uninstall --keep-logs removed log"; fi
 if [ ! -e "$U_APPSUP" ]; then ok "uninstall --keep-logs still removes runtime"; else bad "keep-logs left runtime"; fi
 

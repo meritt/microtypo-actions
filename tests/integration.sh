@@ -19,16 +19,16 @@ INSTALL_LOG="$SANDBOX/install.log"
 RC_JSON='{"rules":{"dash.em_double_hyphen":false}}'
 
 selection() {
-  printf '%s' "$1" | env HOME="$SANDBOX" bash "$APP/typograph-selection.sh"
+  printf '%s' "$1" | env HOME="$SANDBOX" "$BASH" "$APP/typograph-selection.sh"
 }
 
 files() {
-  env HOME="$SANDBOX" MICROTYPO_LOG="$LOG" bash "$APP/typograph-file.sh" "$@" >/dev/null 2>&1
+  env HOME="$SANDBOX" MICROTYPO_LOG="$LOG" "$BASH" "$APP/typograph-file.sh" "$@" >/dev/null 2>&1
 }
 
 echo "== install =="
-if env HOME="$SANDBOX" MICROTYPO_SKIP_PBS=1 bash "$REPO_DIR/install.sh" > "$INSTALL_LOG" 2>&1; then
-  ok "install.sh installs $MICROTYPO_DEFAULT_NPM_SPEC"
+if env HOME="$SANDBOX" MICROTYPO_SKIP_PBS=1 "$BASH" "$REPO_DIR/install.sh" > "$INSTALL_LOG" 2>&1; then
+  ok "install.sh installs microtypo@$(pinned_version)"
 else
   bad "install.sh failed"
   cat "$INSTALL_LOG" >&2
@@ -40,7 +40,7 @@ fi
 . "$APP/env.sh"
 # shellcheck disable=SC2153  # NODE_BIN and MICROTYPO_CLI come from the generated env.sh
 eq "installed CLI reports the pinned version" \
-  "$("$NODE_BIN" "$MICROTYPO_CLI" --version 2>/dev/null)" "${MICROTYPO_DEFAULT_NPM_SPEC#*@}"
+  "$("$NODE_BIN" "$MICROTYPO_CLI" --version 2>/dev/null)" "$(pinned_version)"
 
 echo "== CLI contract =="
 printf '"x" -- y\n' > "$SANDBOX/-dash.txt"
@@ -74,6 +74,8 @@ for n in a b c; do printf '"Амбер" -- вечен\n' > "$WORK/$n.txt"; done
 printf -- '---\ntitle: "Тест"\n---\n\n"Амбер" -- вечен\n' > "$WORK/post.md"
 printf '{"t":"\\"Амбер\\" -- вечен"}\n' > "$WORK/data.json"
 printf '"x" -- y\n' > "$WORK/-lead.txt"
+printf '<Box title="А - б">"Амбер" -- вечен</Box>\n' > "$WORK/page.mdx"
+printf 'Амбер\n' > "$WORK/plain.txt"
 cp "$REPO_DIR/tests/fixtures/pic.png" "$WORK/pic.png"
 printf '"z" -- w\n' > "$SANDBOX/outside.txt"
 ln -s "$SANDBOX/outside.txt" "$WORK/link.txt"
@@ -92,7 +94,10 @@ else
   bad "typeset json no longer parses"
 fi
 has "batch typesets a leading-dash name" "$(cat "$WORK/-lead.txt")" "«x»"
+has "batch typesets mdx prose" "$(cat "$WORK/page.mdx")" "«Амбер»"
+has "batch keeps jsx attributes" "$(cat "$WORK/page.mdx")" 'title="А - б"'
 if [ -f "$WORK/a.txt.orig" ]; then ok "backup written before the rewrite"; else bad "no backup"; fi
+if [ ! -e "$WORK/plain.txt.orig" ]; then ok "unchanged file keeps no backup"; else bad "unchanged file left a backup"; fi
 if [ ! -e "$WORK/pic.png.orig" ]; then ok "png skipped"; else bad "png processed"; fi
 eq "symlink target untouched" "$(cat "$SANDBOX/outside.txt")" '"z" -- w'
 has "log names the processed file" "$(cat "$LOG")" "ok a.txt (text)"
@@ -105,8 +110,14 @@ files "$PROJ"
 has "project config keeps the double hyphen" "$(cat "$PROJ/note.txt")" "--"
 has "project config still sets guillemets" "$(cat "$PROJ/note.txt")" "«Амбер»"
 
+printf 'skip.txt\n' > "$PROJ/.microtypoignore"
+printf '"Амбер" -- вечен\n' > "$PROJ/skip.txt"
+files "$PROJ/skip.txt"
+eq "ignore file keeps a listed file untouched" "$(cat "$PROJ/skip.txt")" '"Амбер" -- вечен'
+if [ ! -e "$PROJ/skip.txt.orig" ]; then ok "ignored file keeps no backup"; else bad "ignored file left a backup"; fi
+
 echo "== uninstall =="
-env HOME="$SANDBOX" MICROTYPO_SKIP_PBS=1 bash "$APP/uninstall.sh" >/dev/null 2>&1
+env HOME="$SANDBOX" MICROTYPO_SKIP_PBS=1 "$BASH" "$APP/uninstall.sh" >/dev/null 2>&1
 if [ ! -e "$APP" ]; then ok "uninstall removes the runtime"; else bad "runtime left behind"; fi
 if [ -f "$WORK/a.txt.orig" ]; then ok "uninstall keeps backups"; else bad "uninstall removed backups"; fi
 

@@ -77,7 +77,7 @@ validate_repo() {
 copy_release_tree() {
   local dst="$1"
 
-  mkdir -p "$dst/src" \
+  mkdir -p "$dst/src" "$dst/runtime" \
            "$dst/services/Microtypo Text.workflow/Contents" \
            "$dst/services/Microtypo File.workflow/Contents" || return 1
 
@@ -85,6 +85,8 @@ copy_release_tree() {
   install -m 0755 "$ROOT/uninstall.sh" "$dst/uninstall.sh" || return 1
   install -m 0644 "$ROOT/VERSION" "$dst/VERSION" || return 1
   install -m 0644 "$ROOT/readme.md" "$dst/readme.md" || return 1
+  install -m 0644 "$ROOT/runtime/package.json" "$dst/runtime/package.json" || return 1
+  install -m 0644 "$ROOT/runtime/package-lock.json" "$dst/runtime/package-lock.json" || return 1
   install -m 0644 "$ROOT/src/common.sh" "$dst/src/common.sh" || return 1
   install -m 0755 "$ROOT/src/typograph-selection.sh" "$dst/src/typograph-selection.sh" || return 1
   install -m 0755 "$ROOT/src/typograph-file.sh" "$dst/src/typograph-file.sh" || return 1
@@ -100,20 +102,7 @@ copy_release_tree() {
 }
 
 write_sha256() {
-  local file="$1" dst="$2" dir base
-  dir="$(dirname "$file")"
-  base="$(basename "$file")"
-
-  if command -v shasum >/dev/null 2>&1; then
-    (cd "$dir" && shasum -a 256 "$base" > "$dst")
-    return $?
-  fi
-  if command -v sha256sum >/dev/null 2>&1; then
-    (cd "$dir" && sha256sum "$base" > "$dst")
-    return $?
-  fi
-  printf 'error: shasum or sha256sum is required to write archive checksum\n' >&2
-  return 1
+  (cd "$(dirname "$1")" && shasum -a 256 "$(basename "$1")" > "$2")
 }
 
 write_bootstrap_installer() {
@@ -135,17 +124,8 @@ need_cmd() {
   fi
 }
 
-verify_sha256() {
-  local file="$1" checksum="$2"
-  if command -v shasum >/dev/null 2>&1; then
-    (cd "$(dirname "$file")" && shasum -a 256 -c "$(basename "$checksum")" >/dev/null)
-    return $?
-  fi
-  if command -v sha256sum >/dev/null 2>&1; then
-    (cd "$(dirname "$file")" && sha256sum -c "$(basename "$checksum")" >/dev/null)
-    return $?
-  fi
-  return 0
+fetch() {
+  curl -fsSL --proto '=https' --tlsv1.2 --retry 3 --connect-timeout 15 --max-time 120 "$1" -o "$2"
 }
 
 REPO="${MICROTYPO_ACTIONS_REPO:-$DEFAULT_REPO}"
@@ -153,37 +133,27 @@ VERSION="${MICROTYPO_ACTIONS_VERSION:-$DEFAULT_VERSION}"
 ARCHIVE="${MICROTYPO_ACTIONS_ARCHIVE:-$DEFAULT_ARCHIVE}"
 BUNDLE_DIR="microtypo-actions-$VERSION"
 
-case "$REPO" in
-  OWNER/*|*/REPO|OWNER/REPO)
-    printf 'error: set MICROTYPO_ACTIONS_REPO=owner/repo\n' >&2
-    exit 1
-    ;;
-esac
-
 need_cmd curl
 need_cmd tar
+need_cmd shasum
 
-TMP_ROOT="${TMPDIR:-/tmp}"
-TMP="$(mktemp -d "$TMP_ROOT/microtypo-actions-install.XXXXXX")" || exit 1
+TMP="$(mktemp -d "${TMPDIR:-/tmp}/microtypo-actions-install.XXXXXX")" || exit 1
 cleanup() { rm -rf "$TMP"; }
 trap cleanup EXIT INT TERM
 
 BASE_URL="https://github.com/$REPO/releases/download/$VERSION"
-ARCHIVE_PATH="$TMP/$ARCHIVE"
-CHECKSUM_PATH="$TMP/$ARCHIVE.sha256"
 
-if ! curl -fsSL --retry 3 --connect-timeout 15 "$BASE_URL/$ARCHIVE" -o "$ARCHIVE_PATH"; then
-  printf 'error: failed to download release archive\n' >&2
+if ! fetch "$BASE_URL/$ARCHIVE" "$TMP/$ARCHIVE" || ! fetch "$BASE_URL/$ARCHIVE.sha256" "$TMP/$ARCHIVE.sha256"; then
+  printf 'error: failed to download the release\n' >&2
   exit 1
 fi
 
-if curl -fsSL --retry 3 --connect-timeout 15 "$BASE_URL/$ARCHIVE.sha256" -o "$CHECKSUM_PATH"; then
-  verify_sha256 "$ARCHIVE_PATH" "$CHECKSUM_PATH" || exit 1
-else
-  printf 'warning: checksum not found\n' >&2
+if ! (cd "$TMP" && shasum -a 256 -c "$ARCHIVE.sha256" >/dev/null); then
+  printf 'error: release checksum does not match\n' >&2
+  exit 1
 fi
 
-tar -xzf "$ARCHIVE_PATH" -C "$TMP" || exit 1
+tar -xzf "$TMP/$ARCHIVE" -C "$TMP" || exit 1
 if [ ! -x "$TMP/$BUNDLE_DIR/install.sh" ]; then
   printf 'error: installer not found in archive: %s/install.sh\n' "$BUNDLE_DIR" >&2
   exit 1
@@ -215,12 +185,13 @@ main() {
 
   bundle="microtypo-actions-$version"
   archive="$bundle.tar.gz"
-  stage="${TMPDIR:-/tmp}/microtypo-actions-release.$$"
 
-  rm -rf "$out_dir" "$stage" || exit 1
-  mkdir -p "$out_dir" "$stage/$bundle" || exit 1
+  rm -rf "$out_dir" || exit 1
+  mkdir -p "$out_dir" || exit 1
   out_dir="$(cd "$out_dir" && pwd)" || exit 1
+  stage="$(mktemp -d "${TMPDIR:-/tmp}/microtypo-actions-release.XXXXXX")" || exit 1
   trap 'rm -rf "$stage"' EXIT INT TERM
+  mkdir -p "$stage/$bundle" || exit 1
 
   copy_release_tree "$stage/$bundle" || exit 1
 

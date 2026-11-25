@@ -1,5 +1,8 @@
 SCRIPTS := install.sh uninstall.sh src/*.sh scripts/*.sh tests/*.sh
 
+# Quick Actions run under the system bash 3.2, so tests do too.
+BASH := /bin/bash
+
 .PHONY: check test integration release
 
 check:
@@ -7,11 +10,11 @@ check:
 	shellcheck $(SCRIPTS)
 
 test:
-	bash tests/test.sh
+	$(BASH) tests/test.sh
 
 integration:
-	bash tests/integration.sh
+	$(BASH) tests/integration.sh
 
 release:
-	@[ -n "$(VERSION)" ] || { echo "usage: make release VERSION=v0.1.0"; exit 2; }
+	@[ -n "$(VERSION)" ] || { echo "usage: make release VERSION=v0.3.0"; exit 2; }
 	scripts/build-release.sh "$(VERSION)" dist

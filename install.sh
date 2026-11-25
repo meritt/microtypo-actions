@@ -5,10 +5,10 @@ REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=src/common.sh
 . "$REPO_DIR/src/common.sh" || exit 1
 
-MICROTYPO_DEFAULT_NPM_SPEC="microtypo@0.3.1"
+MICROTYPO_RUNTIME="$REPO_DIR/runtime"
+MICROTYPO_CLI_PATH="node_modules/microtypo/src/cli/index.js"
 
-# Minimum Node.js the microtypo CLI needs (microtypo engines: node >=26.13.0).
-# readme.md documents the same floor; keep both in sync.
+# engines.node of the package pinned in runtime/package-lock.json.
 MICROTYPO_NODE_MIN_MAJOR=26
 MICROTYPO_NODE_MIN_MINOR=13
 
@@ -25,7 +25,7 @@ service_name() {
 
 validate_input_format() {
   case "$1" in
-    text|html|markdown|json|xml|yaml|toml|frontmatter) return 0 ;;
+    text|plain|html|markdown|mdx|json|xml|yaml|toml|frontmatter) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -35,14 +35,15 @@ print_usage() {
     'Usage: ./install.sh [options]' \
     '' \
     'Options:' \
-    '  --selection-input <format>  Selected-text input format: text, html, markdown, json, xml, yaml, toml, frontmatter.' \
-    '                              Default: markdown. File mode still detects input from file extension.' \
+    '  --selection-input <format>  Input format of selected text: text, plain, html, markdown, mdx,' \
+    '                              json, xml, yaml, toml, frontmatter. Default: markdown.' \
     '  -h, --help                  Show this help.' \
     '' \
     'Environment:' \
     '  MICROTYPO_SELECTION_INPUT   Same as --selection-input.' \
-    '  MICROTYPO_NPM_SPEC          npm package spec, for example microtypo@0.1.0.' \
-    '  MICROTYPO_CLI_OVERRIDE      Explicit CLI path.'
+    '  MICROTYPO_NODE_BIN          Node.js binary.' \
+    '  MICROTYPO_NPM_BIN           npm binary.' \
+    '  MICROTYPO_CLI_OVERRIDE      microtypo CLI to use instead of the pinned package.'
 }
 
 INSTALL_SELECTION_INPUT=""
@@ -76,7 +77,7 @@ l10n_en() {
     runtime)            printf 'Runtime: %s\n' "$arg" ;;
     stage)              printf 'Temporary directory: %s\n' "$arg" ;;
     npm_failed)         printf 'Failed to install package with npm\n' ;;
-    cli_missing)        printf 'Package CLI not found: node_modules/microtypo/src/cli/index.js\n' ;;
+    cli_missing)        printf 'Package CLI not found: %s\n' "$arg" ;;
     cli_path)           printf 'CLI: %s\n' "$arg" ;;
     check_node)         printf 'Checking Node.js >= %s\n' "$arg" ;;
     node_path)          printf 'Node: %s\n' "$arg" ;;
@@ -106,7 +107,7 @@ l10n_ru() {
     runtime)            printf 'Среда выполнения: %s\n' "$arg" ;;
     stage)              printf 'Временный каталог: %s\n' "$arg" ;;
     npm_failed)         printf 'Не удалось установить пакет через npm\n' ;;
-    cli_missing)        printf 'CLI пакета не найден: node_modules/microtypo/src/cli/index.js\n' ;;
+    cli_missing)        printf 'CLI пакета не найден: %s\n' "$arg" ;;
     cli_path)           printf 'CLI: %s\n' "$arg" ;;
     check_node)         printf 'Проверяю Node.js >= %s\n' "$arg" ;;
     node_path)          printf 'Node: %s\n' "$arg" ;;
@@ -186,24 +187,30 @@ resolve_cli_override() {
   printf '%s\n' "$(cd "$(dirname "$p")" && pwd)/$(basename "$p")"
 }
 
+pinned_version() {
+  sed -n 's/^ *"microtypo": *"\([^"]*\)".*/\1/p' "$MICROTYPO_RUNTIME/package.json"
+}
+
 install_microtypo_package() {
-  local prefix="$1" npm_bin="$2" spec stage previous cli
+  local prefix="$1" npm_bin="$2" spec stage previous
   [ -n "$prefix" ] && [ -n "$npm_bin" ] && [ -x "$npm_bin" ] || return 1
-  spec="${MICROTYPO_NPM_SPEC:-$MICROTYPO_DEFAULT_NPM_SPEC}"
+  spec="microtypo@$(pinned_version)"
   stage="$(mktemp -d "$(dirname "$prefix")/microtypo-stage.XXXXXX")" || return 1
+  # npm ci rejects a prefix that is not its own realpath (/var -> /private/var).
+  stage="$(cd "$stage" && pwd -P)" || return 1
   previous="$stage.previous"
 
   install_step "$(l10n installing_package "$spec")"
   install_detail "$(l10n runtime "$prefix")"
   install_detail "$(l10n stage "$stage")"
 
-  if ! "$npm_bin" install --prefix "$stage" --omit=dev --ignore-scripts --no-audit --no-fund --progress=true "$spec" 1>&2; then
+  if ! cp "$MICROTYPO_RUNTIME/package.json" "$MICROTYPO_RUNTIME/package-lock.json" "$stage/" \
+    || ! "$npm_bin" ci --prefix "$stage" --omit=dev --ignore-scripts --no-audit --no-fund 1>&2; then
     install_detail "$(l10n npm_failed)"
     rm -rf "$stage"; return 1
   fi
-  cli="$stage/node_modules/microtypo/src/cli/index.js"
-  if [ ! -f "$cli" ]; then
-    install_detail "$(l10n cli_missing)"
+  if [ ! -f "$stage/$MICROTYPO_CLI_PATH" ]; then
+    install_detail "$(l10n cli_missing "$MICROTYPO_CLI_PATH")"
     rm -rf "$stage"; return 1
   fi
 
@@ -219,8 +226,8 @@ install_microtypo_package() {
   rm -rf "$previous"
 
   install_step "$(l10n installed_package "$spec")"
-  install_detail "$(l10n cli_path "$prefix/node_modules/microtypo/src/cli/index.js")"
-  printf '%s\n' "$prefix/node_modules/microtypo/src/cli/index.js"
+  install_detail "$(l10n cli_path "$prefix/$MICROTYPO_CLI_PATH")"
+  printf '%s\n' "$prefix/$MICROTYPO_CLI_PATH"
 }
 
 shell_quote() {
@@ -229,12 +236,14 @@ shell_quote() {
 
 write_env_file() {
   local dst="$1" node="$2" cli="$3" selection_input="$4"
-  {
-    printf 'NODE_BIN=%s\n' "$(shell_quote "$node")"
-    printf 'MICROTYPO_CLI=%s\n' "$(shell_quote "$cli")"
-    printf 'MICROTYPO_SELECTION_INPUT=%s\n' "$(shell_quote "$selection_input")"
-  } > "$dst"
-  chmod 0600 "$dst" 2>/dev/null || true
+  (
+    umask 077
+    {
+      printf 'NODE_BIN=%s\n' "$(shell_quote "$node")"
+      printf 'MICROTYPO_CLI=%s\n' "$(shell_quote "$cli")"
+      printf 'MICROTYPO_SELECTION_INPUT=%s\n' "$(shell_quote "$selection_input")"
+    } > "$dst"
+  )
 }
 
 install_workflow_bundle() {
@@ -273,14 +282,15 @@ main() {
     install_detail "$(l10n npm_path "$npm_bin")"
     runtime="$appsup/npm"
     cli="$(install_microtypo_package "$runtime" "$npm_bin")" || {
-      l10n err_install "${MICROTYPO_NPM_SPEC:-$MICROTYPO_DEFAULT_NPM_SPEC}" >&2; exit 1;
+      l10n err_install "microtypo@$(pinned_version)" >&2; exit 1;
     }
   fi
 
   env_out="$appsup/env.sh"
   install_step "$(l10n write_env)"
   install_detail "$env_out"
-  write_env_file "$env_out" "$node" "$cli" "$selection_input"
+  rm -f "$env_out"
+  write_env_file "$env_out" "$node" "$cli" "$selection_input" || exit 1
 
   install_step "$(l10n copy_scripts)"
   install -m 0644 "$REPO_DIR/src/common.sh"              "$appsup/common.sh"              || exit 1

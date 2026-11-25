@@ -21,6 +21,7 @@ MAX_MS=30000
 
 EXTENSION_MAP=(
   md:frontmatter markdown:frontmatter mdown:frontmatter mkd:frontmatter
+  mdx:mdx
   html:html htm:html
   json:json
   yaml:yaml yml:yaml
@@ -157,6 +158,7 @@ collect_dir() {
 }
 
 chunk=()
+fresh=()
 chunk_fmt=""
 chunk_root=""
 chunk_bytes=0
@@ -204,10 +206,26 @@ chunk_run() {
     fi
   fi
 
+  drop_unused_backups
   processed=$((processed+count))
   chunk=()
   chunk_bytes=0
   progress
+}
+
+drop_unused_backups() {
+  local f
+  for f in "${fresh[@]}"; do
+    cmp -s "$f" "$f.orig" && rm -f "$f.orig"
+  done
+  fresh=()
+}
+
+backup() {
+  [ ! -L "$1.orig" ] || return 1
+  [ ! -e "$1.orig" ] || return 0
+  cp -p "$1" "$1.orig" || return 1
+  fresh+=("$1")
 }
 
 chunk_add() {
@@ -220,12 +238,12 @@ chunk_add() {
     chunk_run
   fi
 
-  if [ ! -e "$f.orig" ] && ! cp -p "$f" "$f.orig"; then
+  backup "$f" || {
     log "backup-fail $(log_path "$f")"
     failed=$((failed+1))
     processed=$((processed+1))
     return 1
-  fi
+  }
 
   chunk_fmt="$fmt"
   chunk_root="$root"
@@ -256,16 +274,16 @@ main() {
       log "skip $(log_path "$target") (symlink)"
       skipped=$((skipped+1))
     elif [ -d "$target" ]; then
-      dir="$(cd "$target" && pwd)" || continue
+      dir="$(cd "$target" && pwd -P)" || continue
       collect_dir "$dir"
-    elif [ -e "$target" ]; then
+    elif [ -f "$target" ]; then
       if ! fmt="$(detect_format "${target##*/}")"; then
         log "skip $(log_path "$target") (unknown)"
         skipped=$((skipped+1))
         continue
       fi
-      dir="$(cd "$(dirname "$target")" && pwd)" || continue
-      collect_file "$target" "$fmt" "$dir"
+      dir="$(cd "$(dirname "$target")" && pwd -P)" || continue
+      collect_file "$dir/${target##*/}" "$fmt" "$dir"
     fi
   done
 
