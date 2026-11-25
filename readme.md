@@ -11,22 +11,47 @@ macOS Quick Actions that apply [`microtypo`](https://github.com/meritt/microtypo
 
 ## Install
 
+Latest release:
+
 ```bash
 curl -fsSL https://github.com/meritt/microtypo-actions/releases/latest/download/install.sh | bash
-curl -fsSL https://github.com/meritt/microtypo-actions/releases/download/v0.3.0/install.sh | bash   # pinned
-./install.sh                                                                                         # from source
-./install.sh --selection-input text                                                                  # selection format
+```
+
+Pinned release:
+
+```bash
+curl -fsSL https://github.com/meritt/microtypo-actions/releases/download/v0.3.0/install.sh | bash
+```
+
+From source:
+
+```bash
+./install.sh
+```
+
+Selection format, here `text`:
+
+```bash
+curl -fsSL https://github.com/meritt/microtypo-actions/releases/latest/download/install.sh | bash -s -- --selection-input text
 ```
 
 `--selection-input`: `text`, `plain`, `html`, `markdown` (default), `mdx`, `json`, `xml`, `yaml`, `toml`, `frontmatter`.
+`./install.sh` takes the same option.
 
 The installer resolves Node.js from `MICROTYPO_NODE_BIN`, then `PATH`, then Homebrew, and installs the
 microtypo version pinned in `runtime/package-lock.json` with `npm ci --ignore-scripts`.
 
 ## Verify
 
+Checksum:
+
 ```bash
 shasum -a 256 -c microtypo-actions-v0.3.0.tar.gz.sha256
+```
+
+Build provenance (GitHub CLI):
+
+```bash
 gh attestation verify microtypo-actions-v0.3.0.tar.gz --repo meritt/microtypo-actions
 ```
 
@@ -104,9 +129,10 @@ Messages follow the system language (Russian or English); override with `MICROTY
 ## Uninstall
 
 ```bash
-"$HOME/Library/Application Support/Microtypo-QuickAction/uninstall.sh"              # keeps *.orig
-"$HOME/Library/Application Support/Microtypo-QuickAction/uninstall.sh" --keep-logs  # keeps the log too
+"$HOME/Library/Application Support/Microtypo-QuickAction/uninstall.sh"
 ```
+
+`*.orig` backups are kept. `--keep-logs` keeps `~/Library/Logs/microtypo.log` too.
 
 ## Develop
 
@@ -118,9 +144,16 @@ make integration  # real package from npm, both actions; needs network
 
 `VERSION` holds the project version. A release bumps it, then tags; the build refuses a tag that disagrees.
 
+Release:
+
 ```bash
 git tag -a v0.3.0 -m v0.3.0 && git push origin v0.3.0
-scripts/build-release.sh v0.3.0 dist meritt/microtypo-actions   # local build
+```
+
+Local build:
+
+```bash
+scripts/build-release.sh v0.3.0 dist meritt/microtypo-actions
 ```
 
 ## Author
