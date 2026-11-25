@@ -2,177 +2,125 @@
 
 [![Build status][github-actions-image]][github-actions-url]
 
-macOS Quick Actions for applying [`microtypo`](https://github.com/meritt/microtypo) typography to selected text, files, and folders.
+macOS Quick Actions that apply [`microtypo`](https://github.com/meritt/microtypo) typography to selected text, files, and folders.
 
 ## Requirements
 
 - macOS 26 or later
-- Node.js 26.13 or later
-- npm
+- Node.js 26.13 or later, with npm
 
 ## Install
 
 ```bash
 curl -fsSL https://github.com/meritt/microtypo-actions/releases/latest/download/install.sh | bash
+curl -fsSL https://github.com/meritt/microtypo-actions/releases/download/v0.3.0/install.sh | bash   # pinned
+./install.sh                                                                                         # from source
+./install.sh --selection-input text                                                                  # selection format
 ```
 
-Pinned version:
+`--selection-input`: `text`, `plain`, `html`, `markdown` (default), `mdx`, `json`, `xml`, `yaml`, `toml`, `frontmatter`.
 
-```bash
-curl -fsSL https://github.com/meritt/microtypo-actions/releases/download/v0.3.0/install.sh | bash
-```
-
-Local source:
-
-```bash
-./install.sh
-```
-
-Selected text uses `--input markdown` by default:
-
-```bash
-./install.sh --selection-input text
-```
-
-Supported values: `text`, `html`, `markdown`, `json`, `xml`, `yaml`, `toml`, `frontmatter`.
+The installer resolves Node.js from `MICROTYPO_NODE_BIN`, then `PATH`, then Homebrew, and installs the
+microtypo version pinned in `runtime/package-lock.json` with `npm ci --ignore-scripts`.
 
 ## Verify
 
-Release archives ship a SHA-256 checksum and a build provenance attestation.
-
-Checksum:
-
 ```bash
 shasum -a 256 -c microtypo-actions-v0.3.0.tar.gz.sha256
-```
-
-Provenance (requires the GitHub CLI):
-
-```bash
 gh attestation verify microtypo-actions-v0.3.0.tar.gz --repo meritt/microtypo-actions
 ```
 
 ## Actions
 
-- `Microtypo Text`: transforms the current text selection and replaces it in place.
-- `Microtypo File`: transforms selected Finder files or folders in place.
+| Action | Input | Result |
+|---|---|---|
+| `Microtypo Text` | text selection | replaced in place |
+| `Microtypo File` | Finder files and folders | rewritten in place |
 
-Assign shortcuts in System Settings -> Keyboard -> Keyboard Shortcuts -> Services. The same shortcut can be assigned to both actions because they run in different contexts.
+Shortcuts: System Settings -> Keyboard -> Keyboard Shortcuts -> Services. One shortcut can serve both actions.
 
 ## Files
 
-Before the first file edit, `<file>.orig` is created with `cp -p`. Existing `.orig` files are never overwritten.
-
-Supported file formats:
-
-| Extension | Input |
+| Extension | `--input` |
 |---|---|
 | `.md`, `.markdown`, `.mdown`, `.mkd` | `frontmatter` |
+| `.mdx` | `mdx` |
 | `.html`, `.htm` | `html` |
 | `.json` | `json` |
 | `.yaml`, `.yml` | `yaml` |
 | `.toml` | `toml` |
 | `.xml` | `xml` |
-| `.txt`, `.text`, no extension | `text` |
+| `.txt`, `.text`, none | `text` |
 
-Unknown extensions, symlinks, hidden files, and macOS package directories are skipped. Inside a
-folder only the listed extensions are picked up; a file without an extension is transformed when it
-is selected directly.
-
-Files of the same input format are rewritten in batches. A batch that fails leaves its files
-untouched unless the failure happened mid-write, so `<file>.orig` remains the way back.
+- Skipped: unknown extensions, symlinks, hidden files, macOS packages (`.app`, `.bundle`, `.pages`, ...).
+  A file without an extension is taken only when selected directly.
+- Backup: `<file>.orig` (`cp -p`) before the first rewrite; never overwritten, removed again if the run
+  left the file unchanged. A symlinked `<file>.orig` fails the file.
+- Batches: one CLI run per format and folder. A failed batch leaves its files untouched unless it failed
+  mid-write.
 
 ## Configuration
 
-The CLI reads `.microtyporc.json`, searching upwards from its working directory, which the actions
-set explicitly:
+The CLI searches `.microtyporc.json` upwards from its working directory and reads `.microtypoignore` next
+to that config, or from the working directory without one:
 
-| Action | Working directory | Effective config |
-|---|---|---|
-| `Microtypo Text` | `$HOME` | `~/.microtyporc.json` |
-| `Microtypo File` | the selected folder, or the file's folder | the nearest `.microtyporc.json` from there up |
+| Action | Working directory |
+|---|---|
+| `Microtypo Text` | `$HOME` |
+| `Microtypo File` | the selected folder, or the selected file's folder |
 
-So a project keeps its own typography rules next to its text, and `~/.microtyporc.json` covers
-everything else. Options are documented in the [microtypo configuration
-reference](https://github.com/meritt/microtypo/blob/main/api/configuration.md).
+```text
+~/.microtyporc.json            # selection and everything without a project config
+~/notes/.microtyporc.json      # files under ~/notes
+~/notes/.microtypoignore       # files under ~/notes left as is
+```
+
+The action passes `--input` by extension; it takes precedence over `input` in the config. Other options:
+[microtypo configuration](https://github.com/meritt/microtypo/blob/main/api/configuration.md),
+[CLI](https://github.com/meritt/microtypo/blob/main/api/cli.md).
 
 ## Runtime
 
-The installer writes absolute paths to:
-
-```
-~/Library/Application Support/Microtypo-QuickAction/env.sh
-```
-
-The private npm runtime is installed under:
-
 ```text
-~/Library/Application Support/Microtypo-QuickAction/npm
+~/Library/Application Support/Microtypo-QuickAction/env.sh   # node, CLI, selection format
+~/Library/Application Support/Microtypo-QuickAction/npm      # private npm runtime
+~/Library/Logs/microtypo.log                                 # file action log
 ```
-
-Logs:
-
-```bash
-tail -n 20 ~/Library/Logs/microtypo.log
-```
-
-The log rotates to `microtypo.log.1` once it passes 1 MiB (override with `MICROTYPO_LOG_MAX_BYTES`).
-
-Every run is bounded. Reaching a ceiling stops the run, goes to the log, and is reported in the
-final notification:
 
 | Variable | Default | Bounds |
 |---|---|---|
-| `MICROTYPO_MAX_FILES` | 2000 | files taken per run |
-| `MICROTYPO_MAX_SECONDS` | 300 | wall-clock budget for the whole run |
+| `MICROTYPO_MAX_FILES` | 2000 | files per run |
+| `MICROTYPO_MAX_SECONDS` | 300 | wall clock per run |
 | `MICROTYPO_CHUNK_FILES` | 50 | files per CLI run |
-| `MICROTYPO_CHUNK_BYTES` | 8388608 | total size of one batch |
-| `MICROTYPO_TIMEOUT` | 60 | seconds one CLI run may take |
-| `MICROTYPO_PROGRESS_SECONDS` | 5 | minimum gap between progress notifications |
+| `MICROTYPO_CHUNK_BYTES` | 8388608 | bytes per CLI run |
+| `MICROTYPO_TIMEOUT` | 60 | seconds per CLI run |
+| `MICROTYPO_PROGRESS_SECONDS` | 5 | gap between progress notifications |
+| `MICROTYPO_LOG_MAX_BYTES` | 1048576 | log size before rotation to `.log.1` |
 
-## Language
+A ceiling that stops a run is logged and reported in the final notification.
 
-Installer output and notifications follow the system language: Russian when the system is set to Russian, English otherwise. Override with `MICROTYPO_LANG=ru` or `MICROTYPO_LANG=en`.
-
-## Develop
-
-```bash
-make check        # bash -n + shellcheck
-make test         # run tests/test.sh
-make integration  # install the real package and drive both actions; needs network
-```
-
-## Release
-
-`VERSION` in the repository root carries the single version of the project. A release bumps it
-first; the tag must match it, and the build refuses a tag that disagrees.
-
-```bash
-printf '0.3.0\n' > VERSION
-git tag -a v0.3.0 -m "v0.3.0"
-git push origin v0.3.0
-```
-
-Local artifact build:
-
-```bash
-scripts/build-release.sh v0.3.0 dist meritt/microtypo-actions
-```
+Messages follow the system language (Russian or English); override with `MICROTYPO_LANG=ru|en`.
 
 ## Uninstall
 
 ```bash
-"$HOME/Library/Application Support/Microtypo-QuickAction/uninstall.sh"
+"$HOME/Library/Application Support/Microtypo-QuickAction/uninstall.sh"              # keeps *.orig
+"$HOME/Library/Application Support/Microtypo-QuickAction/uninstall.sh" --keep-logs  # keeps the log too
 ```
 
-Pass `--keep-logs` to preserve `~/Library/Logs/microtypo.log`. Backups named `<file>.orig` are left untouched; find them with `find <dir> -name '*.orig'`.
-
-Manual fallback:
+## Develop
 
 ```bash
-rm -rf "$HOME/Library/Services/Microtypo Text.workflow"
-rm -rf "$HOME/Library/Services/Microtypo File.workflow"
-rm -rf "$HOME/Library/Application Support/Microtypo-QuickAction"
+make check        # bash -n, shellcheck
+make test         # unit tests under /bin/bash
+make integration  # real package from npm, both actions; needs network
+```
+
+`VERSION` holds the project version. A release bumps it, then tags; the build refuses a tag that disagrees.
+
+```bash
+git tag -a v0.3.0 -m v0.3.0 && git push origin v0.3.0
+scripts/build-release.sh v0.3.0 dist meritt/microtypo-actions   # local build
 ```
 
 ## Author
