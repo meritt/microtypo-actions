@@ -2,8 +2,12 @@
 .DS_Store
 *.local.*
 .worktrees/
+.superpowers/
 *.log
-docs/
-plan/
 *.orig
 dist/
+
+docs/plans/*
+docs/specs/*
+docs/superpowers/*
+docs/tasks/*

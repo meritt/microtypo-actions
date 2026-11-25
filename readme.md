@@ -158,7 +158,7 @@ scripts/build-release.sh v0.3.0 dist meritt/microtypo-actions
 
 ## Author
 
-- [Alexey Simonenko](https://github.com/meritt)
+- [Alexey Simonenko](https://simonenko.xyz)
 
 ## License
 
