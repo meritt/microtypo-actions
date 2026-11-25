@@ -17,19 +17,28 @@ defaults:
 
 jobs:
   verify:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
+    env:
+      SHELLCHECK_VERSION: v0.11.0
+      SHELLCHECK_SHA256: 8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - name: Syntax
-        run: for f in install.sh uninstall.sh src/*.sh scripts/*.sh tests/*.sh; do bash -n "$f"; done
+      - name: ShellCheck
+        run: |
+          archive="shellcheck-$SHELLCHECK_VERSION.linux.x86_64.tar.xz"
+          curl -fsSL --proto '=https' --max-time 60 -o "$RUNNER_TEMP/$archive" \
+            "https://github.com/koalaman/shellcheck/releases/download/$SHELLCHECK_VERSION/$archive"
+          printf '%s  %s\n' "$SHELLCHECK_SHA256" "$RUNNER_TEMP/$archive" | sha256sum -c -
+          tar -xJf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP"
+          printf '%s\n' "$RUNNER_TEMP/shellcheck-$SHELLCHECK_VERSION" >> "$GITHUB_PATH"
 
-      - name: Shellcheck
-        run: shellcheck install.sh uninstall.sh src/*.sh scripts/*.sh tests/*.sh
+      - name: Check
+        run: make check
 
   test:
     runs-on: macos-26
@@ -41,12 +50,12 @@ jobs:
           persist-credentials: false
 
       - name: Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 26.13.0
+          node-version: 26.13.1
 
       - name: Test
-        run: bash tests/test.sh
+        run: make test
 
   integration:
     runs-on: macos-26
@@ -58,9 +67,9 @@ jobs:
           persist-credentials: false
 
       - name: Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 26.13.0
+          node-version: 26.13.1
 
       - name: Integration
-        run: bash tests/integration.sh
+        run: make integration
